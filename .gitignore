@@ -32,3 +32,12 @@ _ext
 .pytest_cache/*
 docs/_build/
 docs/generated/
+
+
+*.xz
+*.nuboard
+*.parquet
+*log.txt
+*.wisedave*
+epoch*
+*.temp

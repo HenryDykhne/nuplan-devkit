@@ -134,7 +134,7 @@ class IDMAgents(AbstractObservation):
         for data in traffic_light_data:
             traffic_light_status[data.status].append(str(data.lane_connector_id))
 
-        ego_state, _ = history.current_state
+        ego_state, _ = history.current_state ##what a fucking joke. it doesnt even use the real agent positions
         self._get_idm_agent_manager().propagate_agents(
             ego_state,
             tspan,
@@ -150,5 +150,5 @@ class IDMAgents(AbstractObservation):
         :param iteration: The simulation iteration.
         :return: A list of TrackedObjects.
         """
-        detections = self._scenario.get_tracked_objects_at_iteration(iteration)
+        detections = self._scenario.get_tracked_objects_at_iteration(iteration) ## why the hell are we relying on the ground truth detections here
         return detections.tracked_objects.get_tracked_objects_of_types(self._open_loop_detections_types)  # type: ignore

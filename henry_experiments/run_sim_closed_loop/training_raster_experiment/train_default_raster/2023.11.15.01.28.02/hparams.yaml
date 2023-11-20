@@ -1,0 +1,89 @@
+batch_size: 8
+lr_scheduler: null
+metrics:
+- !!python/object:nuplan.planning.training.modeling.metrics.planning_metrics.AverageDisplacementError
+  _name: avg_displacement_error
+- !!python/object:nuplan.planning.training.modeling.metrics.planning_metrics.AverageHeadingError
+  _name: avg_heading_error
+- !!python/object:nuplan.planning.training.modeling.metrics.planning_metrics.FinalDisplacementError
+  _name: final_displacement_error
+- !!python/object:nuplan.planning.training.modeling.metrics.planning_metrics.FinalHeadingError
+  _name: final_heading_error
+objective_aggregate_mode: mean
+objectives:
+- !!python/object:nuplan.planning.training.modeling.objectives.imitation_objective.ImitationObjective
+  _fn_heading: !!python/object:torch.nn.modules.loss.L1Loss
+    _backward_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _backward_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _buffers: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_hooks_with_kwargs: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_pre_hooks_with_kwargs: !!python/object/apply:collections.OrderedDict
+    - []
+    _is_full_backward_hook: null
+    _load_state_dict_post_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _load_state_dict_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _modules: !!python/object/apply:collections.OrderedDict
+    - []
+    _non_persistent_buffers_set: !!set {}
+    _parameters: !!python/object/apply:collections.OrderedDict
+    - []
+    _state_dict_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _state_dict_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    reduction: none
+    training: true
+  _fn_xy: !!python/object:torch.nn.modules.loss.MSELoss
+    _backward_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _backward_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _buffers: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_hooks_with_kwargs: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _forward_pre_hooks_with_kwargs: !!python/object/apply:collections.OrderedDict
+    - []
+    _is_full_backward_hook: null
+    _load_state_dict_post_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _load_state_dict_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _modules: !!python/object/apply:collections.OrderedDict
+    - []
+    _non_persistent_buffers_set: !!set {}
+    _parameters: !!python/object/apply:collections.OrderedDict
+    - []
+    _state_dict_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    _state_dict_pre_hooks: !!python/object/apply:collections.OrderedDict
+    - []
+    reduction: none
+    training: true
+  _name: imitation_objective
+  _scenario_type_loss_weighting:
+    unknown: 1.0
+  _weight: 1.0
+optimizer:
+  _convert_: all
+  _target_: torch.optim.Adam
+  betas:
+  - 0.9
+  - 0.999
+  lr: 5.0e-05
+  weight_decay: 0.0005
+warm_up_lr_scheduler: null

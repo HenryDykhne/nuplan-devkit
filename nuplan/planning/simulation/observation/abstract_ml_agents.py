@@ -62,7 +62,7 @@ class AbstractMLAgents(AbstractObservation):
             for tracked_object in self._scenario.initial_tracked_objects.tracked_objects
             if tracked_object.tracked_object_type == TrackedObjectType.VEHICLE
         }
-        # TODO: consider agents appearing in the future (not just the first frame)
+        # TODO: consider agents appearing in the future (not just the first frame) ## they dont consider this? WTF?
         self._agents = sort_dict(unique_agents)
 
     def name(self) -> str:
@@ -96,7 +96,7 @@ class AbstractMLAgents(AbstractObservation):
             route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
             map_api=self._scenario.map_api,
         )
-        traffic_light_data = self._scenario.get_traffic_light_status_at_iteration(next_iteration.index)
+        traffic_light_data = self._scenario.get_traffic_light_status_at_iteration(next_iteration.index) ##traffic light update
         current_input = PlannerInput(next_iteration, history, traffic_light_data)
         features = self._model_loader.build_features(current_input, initialization)
 
