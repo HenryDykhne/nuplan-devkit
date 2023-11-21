@@ -69,7 +69,7 @@ class EgoCentricMLAgents(AbstractMLAgents):
 
         # Extract trajectory prediction
         if self.prediction_type not in predictions:
-            raise ValueError(f"Prediction does not have the output '{self.prediction_type}'")
+            raise ValueError(f"Prediction does not have the output '{self.prediction_type}', '{predictions.keys()}'")
 
         agents_prediction_tensor = cast(AgentsTrajectories, predictions[self.prediction_type]).data
 
