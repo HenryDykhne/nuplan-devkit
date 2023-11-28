@@ -19,7 +19,16 @@ class RangeOcclusionManager(AbstractOcclusionManager):
         self.range_threshold = range_threshold
 
     def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
+        """
+        Returns set of track tokens that represents the observations visible to the ego
+        at this time step.
+        """
+
+        # Visible track token set
         not_occluded = set()
+
+        # Loop through observations and check if it's closer to the ego then range_threshold, 
+        # add to output set if so.
         for track in observations.tracked_objects.tracked_objects:
             if ((ego_state.center.x - track.center.x) ** 2 + \
                 (ego_state.center.y - track.center.y) ** 2) ** 0.5 <= self.range_threshold:

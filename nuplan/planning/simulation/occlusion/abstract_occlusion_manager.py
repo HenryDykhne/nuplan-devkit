@@ -52,6 +52,10 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
     
     @abstractmethod
     def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
+        """
+        Returns set of track tokens that represents the observations visible to the ego
+        at this time step.
+        """
         pass
 
     def _mask_input(self, time_us: int, observations: DetectionsTracks) -> DetectionsTracks:
