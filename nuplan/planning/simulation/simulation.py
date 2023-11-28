@@ -168,6 +168,9 @@ class Simulation:
         self._history.add_sample(
             SimulationHistorySample(iteration, ego_state, trajectory, observation, traffic_light_status)
         )
+        
+        if self._occlusion_manager:
+            self._history.occlusion_masks = self._occlusion_manager._visible_agent_cache
 
         # Propagate state to next iteration
         next_iteration = self._time_controller.next_iteration()
