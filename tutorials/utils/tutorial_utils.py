@@ -213,6 +213,23 @@ def serialize_scenario(
     return simulation_history
 
 
+
+def visualize_history(
+    simulation_history: SimulationHistory, scenario: NuPlanScenario, save_dir: str = '/tmp/scenario_visualization/', bokeh_port: int = 8899
+) -> None:
+    """
+    Visualize a scenario in Bokeh.
+    :param scenario: Scenario object to be visualized.
+    :param save_dir: Dir to save serialization and visualization artifacts.
+    :param bokeh_port: Port that the server bokeh starts to render the generate the visualization will run on.
+    """
+    map_factory = NuPlanMapFactory(get_maps_db(map_root=scenario.map_root, map_version=scenario.map_version))
+
+    simulation_scenario_key = save_scenes_to_dir(
+        scenario=scenario, save_dir=save_dir, simulation_history=simulation_history
+    )
+    visualize_scenarios([simulation_scenario_key], map_factory, Path(save_dir), bokeh_port=bokeh_port)
+
 def visualize_scenario(
     scenario: NuPlanScenario, save_dir: str = '/tmp/scenario_visualization/', bokeh_port: int = 8899
 ) -> None:

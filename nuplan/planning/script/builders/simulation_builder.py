@@ -9,6 +9,7 @@ from nuplan.common.utils.distributed_scenario_filter import DistributedMode, Dis
 from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario_builder import NuPlanScenarioBuilder
 from nuplan.planning.script.builders.metric_builder import build_metrics_engines
 from nuplan.planning.script.builders.observation_builder import build_observations
+from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
 from nuplan.planning.script.builders.planner_builder import build_planners
 from nuplan.planning.script.builders.utils.utils_type import is_target_type
 from nuplan.planning.simulation.callback.abstract_callback import AbstractCallback
@@ -16,6 +17,7 @@ from nuplan.planning.simulation.callback.metric_callback import MetricCallback
 from nuplan.planning.simulation.callback.multi_callback import MultiCallback
 from nuplan.planning.simulation.controller.abstract_controller import AbstractEgoController
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
+from nuplan.planning.simulation.occlusion.abstract_occlusion_manager import AbstractOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import AbstractPlanner
 from nuplan.planning.simulation.runner.simulations_runner import SimulationRunner
 from nuplan.planning.simulation.simulation import Simulation
@@ -103,6 +105,12 @@ def build_simulations(
             # Perception
             observations: AbstractObservation = build_observations(cfg.observation, scenario=scenario)
 
+            # Occlusions
+            if 'occlusion' in cfg.keys() and cfg.occlusion:
+                occlusion_manager: AbstractOcclusionManager = build_occlusion_manager(cfg.occlusion, scenario=scenario)
+            else:
+                occlusion_manager = None
+
             # Metric Engine
             metric_engine = metric_engines_map.get(scenario.scenario_type, None)
             if metric_engine is not None:
@@ -120,6 +128,7 @@ def build_simulations(
                 time_controller=simulation_time_controller,
                 observations=observations,
                 ego_controller=ego_controller,
+                occlusion_manager=occlusion_manager,
                 scenario=scenario,
             )
 

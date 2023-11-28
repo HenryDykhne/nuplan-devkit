@@ -45,6 +45,7 @@ class Simulation:
         self._time_controller = simulation_setup.time_controller
         self._ego_controller = simulation_setup.ego_controller
         self._observations = simulation_setup.observations
+        self._occlusion_manager = simulation_setup.occlusion_manager
         self._scenario = simulation_setup.scenario
         self._callback = MultiCallback([]) if callback is None else callback
 
@@ -136,8 +137,13 @@ class Simulation:
 
         # Extract traffic light status data
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
+
+        history_input = self._history_buffer
+        if self._occlusion_manager is not None:
+            history_input = self._occlusion_manager.occlude_input(history_input)
+
         logger.debug(f"Executing {iteration.index}!")
-        return PlannerInput(iteration=iteration, history=self._history_buffer, traffic_light_data=traffic_light_data)
+        return PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
 
     def propagate(self, trajectory: AbstractTrajectory) -> None:
         """
@@ -162,6 +168,9 @@ class Simulation:
         self._history.add_sample(
             SimulationHistorySample(iteration, ego_state, trajectory, observation, traffic_light_status)
         )
+        
+        if self._occlusion_manager:
+            self._history.occlusion_masks = self._occlusion_manager._visible_agent_cache
 
         # Propagate state to next iteration
         next_iteration = self._time_controller.next_iteration()

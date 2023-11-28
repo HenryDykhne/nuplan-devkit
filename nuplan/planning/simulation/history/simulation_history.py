@@ -41,6 +41,8 @@ class SimulationHistory:
         """
         self.map_api: AbstractMap = map_api
         self.mission_goal = mission_goal
+        # NOTE: This is just for visualization code, not used during simulation
+        self.occlusion_masks = None
 
         self.data: List[SimulationHistorySample] = data if data is not None else list()
 
