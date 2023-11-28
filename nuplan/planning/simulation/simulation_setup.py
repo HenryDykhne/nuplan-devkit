@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.controller.abstract_controller import AbstractEgoController
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
-from nuplan.planning.simulation.occlusion.occlusion_manager import AbstractOcclusionManager
+from nuplan.planning.simulation.occlusion.abstract_occlusion_manager import AbstractOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import AbstractPlanner
 from nuplan.planning.simulation.simulation_time_controller.abstract_simulation_time_controller import (
     AbstractSimulationTimeController,

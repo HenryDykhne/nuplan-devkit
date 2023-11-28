@@ -11,24 +11,38 @@ from nuplan.planning.simulation.observation.observation_type import DetectionsTr
 
 
 class AbstractOcclusionManager(metaclass=ABCMeta):
+    """
+    Interface for a generic occlusion manager.
+    """
+
     def __init__(
         self,
         scenario: AbstractScenario
     ):
-        self._masks = {}
+        self._visible_agent_cache = {}
         self.scenario = scenario
 
     def reset(self) -> None:
-        self._masks = {}
+        """
+        Resets occlusion manager cache.
+        """
+        self._visible_agent_cache = {}
 
     def occlude_input(self, input_buffer: SimulationHistoryBuffer) -> SimulationHistoryBuffer:
+        """
+        Occludes SimulationHistoryBuffer input. Loops through each timestep defined by time_us,
+        checks to see if timestep is already contained in _visible_agent_cache and computes
+        occlusions if not, and occludes timestep using cached results. Repacks output in 
+        SimulationHistoryBuffer.
+        """
+
         ego_state_buffer = input_buffer.ego_state_buffer
         observations_buffer = input_buffer.observation_buffer
         sample_interval = input_buffer.sample_interval
 
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
-            if ego_state.time_us not in self._masks:
-                self._masks[ego_state.time_us] = self._compute_mask(ego_state, observations)
+            if ego_state.time_us not in self._visible_agent_cache:
+                self._visible_agent_cache[ego_state.time_us] = self._compute_mask(ego_state, observations)
                 
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
                             deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
@@ -41,14 +55,16 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         pass
 
     def _mask_input(self, time_us: int, observations: DetectionsTracks) -> DetectionsTracks:
-        assert time_us in self._masks, "Attempted to mask non-cached timestep!"
+        """
+        Occludes observations at timestep time_us based on cached occlusions.
+        """
+
+        assert time_us in self._visible_agent_cache, "Attempted to mask non-cached timestep!"
         assert isinstance(observations, DetectionsTracks), "Occlusions only support DetectionsTracks."
 
-        mask = self._masks[time_us]
+        mask = self._visible_agent_cache[time_us]
         tracks = observations.tracked_objects.tracked_objects
 
         visible_tracks = [track for track in tracks if track.metadata.track_token in mask]
 
         return DetectionsTracks(tracked_objects=TrackedObjects(visible_tracks))
-
-
