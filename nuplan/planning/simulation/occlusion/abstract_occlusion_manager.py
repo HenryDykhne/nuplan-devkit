@@ -42,7 +42,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
 
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
             if ego_state.time_us not in self._visible_agent_cache:
-                self._visible_agent_cache[ego_state.time_us] = self._compute_mask(ego_state, observations)
+                self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
                 
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
                             deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
@@ -51,7 +51,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         return output_buffer
     
     @abstractmethod
-    def _compute_mask(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
+    def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
         pass
 
     def _mask_input(self, time_us: int, observations: DetectionsTracks) -> DetectionsTracks:

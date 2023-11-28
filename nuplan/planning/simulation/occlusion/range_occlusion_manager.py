@@ -18,7 +18,7 @@ class RangeOcclusionManager(AbstractOcclusionManager):
         super().__init__(scenario)
         self.range_threshold = range_threshold
 
-    def _compute_mask(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
+    def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
         not_occluded = set()
         for track in observations.tracked_objects.tracked_objects:
             if ((ego_state.center.x - track.center.x) ** 2 + \
