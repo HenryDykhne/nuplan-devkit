@@ -23,7 +23,7 @@ class CompleteShadowOcclusionManager(AbstractOcclusionManager):
     def __init__(
         self,
         scenario: AbstractScenario,
-        horizon_threshold: float = 4800, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
+        horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
         min_rad: float = 0.035, # minimum radians that the vehicle must take up to be observed (0.035 = aprox 2 degrees)
         num_wedges: float = 180 # gives wedge width of roughly 2 degrees
 
