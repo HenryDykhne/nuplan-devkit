@@ -65,7 +65,7 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
                 
         combined_shadow_poly = unary_union(shadow_polys)
         
-        observer_origin = Point(ORIG)
+        observer_origin = Point(self.ORIG)
         for target in targets: #now we check if each target is contained within the shadows
             corners_list = target.box.all_corners() #Return 4 corners of oriented box (FL, RL, RR, FR) Point2D
             corners = []
@@ -77,7 +77,7 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
             
             hull = unary_union([diff_poly, observer_origin]).convex_hull
             if isinstance(hull, Polygon):
-                neighbor_1, neighbor_2 = self._get_two_neighbors(ORIG, hull)
+                neighbor_1, neighbor_2 = self._get_two_neighbors(self.ORIG, hull)
                 radians = abs(math.atan2(neighbor_1.x*neighbor_2.y - neighbor_1.y*neighbor_2.x, neighbor_1.x*neighbor_2.x + neighbor_1.y*neighbor_2.y ))
                 if radians > self.min_rad:
                     not_occluded.add(target.metadata.track_token)
