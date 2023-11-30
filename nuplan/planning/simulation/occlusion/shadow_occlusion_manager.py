@@ -14,24 +14,24 @@ import numpy as np
 import time
 
 
-class CompleteShadowOcclusionManager(AbstractOcclusionManager):
+class ShadowOcclusionManager(AbstractOcclusionManager):
     """
     Range occlusion manager. Occludes all objects outside of a given
     range of the ego.
     """
+
+    ORIG = (0,0)
 
     def __init__(
         self,
         scenario: AbstractScenario,
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
         min_rad: float = 0.035, # minimum radians that the vehicle must take up to be observed (0.035 = aprox 2 degrees)
-        num_wedges: float = 180 # gives wedge width of roughly 2 degrees
-
     ):
         super().__init__(scenario)
         self.horizon_threshold = horizon_threshold
         self.min_rad = min_rad
-        self.num_wedges = num_wedges
+
     def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
         """
         Returns set of track tokens that represents the observations visible to the ego
@@ -41,7 +41,7 @@ class CompleteShadowOcclusionManager(AbstractOcclusionManager):
         return self._determine_occlusions(ego_state.agent, observations.tracked_objects.tracked_objects)
     
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
-        start = time.time()
+        # start = time.time()
         not_occluded = set() # Visible track token set
         
         shadow_polys = deque([])
@@ -65,7 +65,7 @@ class CompleteShadowOcclusionManager(AbstractOcclusionManager):
                 
         combined_shadow_poly = unary_union(shadow_polys)
         
-        observer_origin = Point((0,0))
+        observer_origin = Point(ORIG)
         for target in targets: #now we check if each target is contained within the shadows
             corners_list = target.box.all_corners() #Return 4 corners of oriented box (FL, RL, RR, FR) Point2D
             corners = []
@@ -77,11 +77,11 @@ class CompleteShadowOcclusionManager(AbstractOcclusionManager):
             
             hull = unary_union([diff_poly, observer_origin]).convex_hull
             if isinstance(hull, Polygon):
-                neighbor_1, neighbor_2 = self._get_two_neighbors((0,0), hull)
+                neighbor_1, neighbor_2 = self._get_two_neighbors(ORIG, hull)
                 radians = abs(math.atan2(neighbor_1.x*neighbor_2.y - neighbor_1.y*neighbor_2.x, neighbor_1.x*neighbor_2.x + neighbor_1.y*neighbor_2.y ))
                 if radians > self.min_rad:
                     not_occluded.add(target.metadata.track_token)
-        print('elapsed time:', time.time() - start)
+        # print('elapsed time:', time.time() - start)
         return not_occluded
     
     def _get_two_neighbors(self, point, polygon) -> List[Point]:
@@ -100,42 +100,3 @@ class CompleteShadowOcclusionManager(AbstractOcclusionManager):
         two_neighbors[0] = Point(two_neighbors[0])
         two_neighbors[1] = Point(two_neighbors[1])
         return two_neighbors
-
-    #alternative occlusion implementation. measured to be an order of magnitude slower
-    def _determine_occlusions_alt(self, observer: AgentState, targets:List[AgentState]) -> set:
-        start = time.time()
-        not_occluded = set() # Visible track token set
-        rads = np.linspace(0,2*math.pi,self.num_wedges+1)
-
-        for i in range(len(rads)-1):
-            build_wedge = time.time()
-
-            d1 = rads[i]#create wedge
-            d2 = rads[i+1]
-            p1 = (self.horizon_threshold * math.cos(d1), self.horizon_threshold * math.sin(d1))
-            p2 = (self.horizon_threshold * math.cos(d2), self.horizon_threshold * math.sin(d2))
-            wedge = Polygon([(0,0), p1, p2])
-            print('build_wedge', time.time() - build_wedge)
-
-
-            wedge_occupiers = []
-            target_looping = time.time()
-
-            collect_targets = time.time()
-            for target in targets:
-                corners_list = target.box.all_corners() #Return 4 corners of oriented box (FL, RL, RR, FR) Point2D
-                corners = []
-                for corner in corners_list:
-                    corners.append((corner.x - observer.center.x, corner.y - observer.center.y)) #we shift the corners and move them to a different data structure we can play with
-                target_poly = Polygon(corners)
-                if wedge.intersects(target_poly):
-                    wedge_occupiers.append(target)
-            print('collect_targets', time.time() - collect_targets)
-            
-            sort_time = time.time()
-            if len(wedge_occupiers) > 0:
-                wedge_occupiers.sort(key=lambda x: (x.center.x - observer.center.x)**2 + (x.center.y - observer.center.y)**2)
-                not_occluded.add(wedge_occupiers[0].metadata.track_token)            
-            print('sort_time', time.time() - sort_time)
-        print('elapsed time:', time.time() - start)
-        return not_occluded
