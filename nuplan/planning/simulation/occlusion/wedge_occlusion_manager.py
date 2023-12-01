@@ -43,7 +43,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
-        # start = time.time()
+        #start = time.time()
         rads = np.linspace(0,2*math.pi,self.num_wedges+1)
         wedges = set()
 
@@ -70,13 +70,15 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             to_remove = set()
             for wedge in wedges:
                 if wedge.intersects(target_poly):
+                    not_occluded.add(target.metadata.track_token)
                     if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                         to_remove.add(wedge)
-                    not_occluded.add(target.metadata.track_token)
+                    else:
+                        break
             wedges -= to_remove
 
 
-        # print('elapsed time:', time.time() - start)
+        #print('elapsed time:', time.time() - start)
         return not_occluded
     
     def _get_two_neighbors(self, point, polygon) -> List[Point]:
