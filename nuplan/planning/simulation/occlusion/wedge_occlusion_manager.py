@@ -45,7 +45,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
         #start = time.time()
         rads = np.linspace(0,2*math.pi,self.num_wedges+1)
-        wedges = set()
+        wedges = dict()
 
         for i in range(len(rads)-1):
             d1 = rads[i] # create wedge
@@ -54,7 +54,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             p2 = (self.horizon_threshold * math.cos(d2), self.horizon_threshold * math.sin(d2))
             wedge = Polygon([self.ORIG, p1, p2])
 
-            wedges.add(wedge)
+            wedges[i] = wedge
 
         sorted_targets = sorted(targets, key=lambda x: (x.center.x - observer.center.x)**2 + (x.center.y - observer.center.y)**2) #sorts closest to farthest
 
@@ -67,15 +67,50 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 corners.append((corner.x - observer.center.x, corner.y - observer.center.y)) #we shift the corners and move them to a different data structure we can play with
             target_poly = Polygon(corners)
 
+            angle = math.atan2(target.center.y - observer.center.y, target.center.x - observer.center.x) # we get the angle relative to the observer
+
+            index_of_correct_wedge = (angle * self.num_wedges) // (2 * math.pi)
+
             to_remove = set()
-            for wedge in wedges:
-                if wedge.intersects(target_poly):
-                    not_occluded.add(target.metadata.track_token)
-                    if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
-                        to_remove.add(wedge)
-                    else:
-                        break
-            wedges -= to_remove
+            if index_of_correct_wedge in wedges:
+                wedge = wedges[index_of_correct_wedge]
+                not_occluded.add(target.metadata.track_token)
+                if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
+                    to_remove.add(index_of_correct_wedge)
+            
+            right_off_target = False
+            left_off_target = False
+            for i in range(1, self.num_wedges // 2):
+                if right_off_target and left_off_target:
+                    break
+
+                wedge_idx = (index_of_correct_wedge + i) % self.num_wedges
+                if wedge_idx % self.num_wedges in wedges:
+                    wedge = wedges[wedge_idx]
+                    if wedge.intersects(target_poly):
+                        not_occluded.add(target.metadata.track_token)
+                        if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
+                            to_remove.add(wedge_idx)
+                        else:
+                            break
+                    else: 
+                        right_off_target = True
+
+                wedge_idx = (index_of_correct_wedge - i) % self.num_wedges
+                if wedge_idx in wedges:
+                    wedge = wedges[wedge_idx]
+                    if wedge.intersects(target_poly):
+                        not_occluded.add(target.metadata.track_token)
+                        if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
+                            to_remove.add(wedge_idx)
+                        else:
+                            break
+                    else: 
+                        left_off_target = True
+
+
+            for key in to_remove:
+                del wedges[key]
 
 
         #print('elapsed time:', time.time() - start)
