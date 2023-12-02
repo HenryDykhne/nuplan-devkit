@@ -80,20 +80,3 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
         #print('elapsed time:', time.time() - start)
         return not_occluded
-    
-    def _get_two_neighbors(self, point, polygon) -> List[Point]:
-        """retrieve the two neighboring points of point in the polygon
-        :point: a tuple representing a point of the polygon
-        :polygon: a shapely Polygon
-        return: a tuple of the two points immediately neighbors of point 
-        """
-        points = list(polygon.exterior.coords)
-        ndx = points.index(point)
-        two_neighbors = [points[(ndx-1)%len(points)], points[(ndx+1)%len(points)]]
-        if two_neighbors[0] == point:
-            two_neighbors[0] = points[(ndx-2)%len(points)]
-        if two_neighbors[1] == point:
-            two_neighbors[1] = points[(ndx+2)%len(points)]
-        two_neighbors[0] = Point(two_neighbors[0])
-        two_neighbors[1] = Point(two_neighbors[1])
-        return two_neighbors
