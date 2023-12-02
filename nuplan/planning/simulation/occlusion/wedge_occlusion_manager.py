@@ -43,7 +43,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
-        #start = time.time()
+        start = time.time()
         rads = np.linspace(0,2*math.pi,self.num_wedges+1)
         wedges = dict()
 
@@ -69,7 +69,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
             angle = math.atan2(target.center.y - observer.center.y, target.center.x - observer.center.x) # we get the angle relative to the observer
 
-            index_of_correct_wedge = (angle * self.num_wedges) // (2 * math.pi)
+            index_of_correct_wedge = int((angle * self.num_wedges) // (2 * math.pi))
 
             to_remove = set()
             if index_of_correct_wedge in wedges:
@@ -80,7 +80,11 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             
             right_off_target = False
             left_off_target = False
-            for i in range(1, self.num_wedges // 2):
+            max_possible_crossection = ((corners_list[0].x-corners_list[2].x)**2+(corners_list[0].y-corners_list[2].y)**2)**0.5
+            dist = ((target.center.x - observer.center.x)**2 + (target.center.y - observer.center.y)**2)**0.5
+            angular_diameter = 2 * math.atan(max_possible_crossection/(2 * dist))
+            num_wedges_to_check_to_each_side = int((((angular_diameter / 2) * self.num_wedges) // (2 * math.pi)) + 1)
+            for i in range(1, num_wedges_to_check_to_each_side + 1):
                 if right_off_target and left_off_target:
                     break
 
@@ -113,5 +117,5 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 del wedges[key]
 
 
-        #print('elapsed time:', time.time() - start)
+        print('elapsed time:', time.time() - start)
         return not_occluded
