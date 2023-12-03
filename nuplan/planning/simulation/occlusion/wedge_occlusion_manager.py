@@ -5,9 +5,7 @@ from nuplan.planning.simulation.occlusion.abstract_occlusion_manager import Abst
 from nuplan.common.actor_state.agent_state import AgentState
 from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_OBJECT_TYPES, TrackedObjectType
 from shapely.geometry import Polygon, Point, MultiPoint
-from shapely.ops import unary_union
 from typing import List
-from collections import deque 
 import math
 import numpy as np
 
