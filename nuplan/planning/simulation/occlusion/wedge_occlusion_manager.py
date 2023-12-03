@@ -43,7 +43,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
-        start = time.time()
+        #start = time.time()
         rads = np.linspace(0,2*math.pi,self.num_wedges+1)
         wedges = dict()
 
@@ -116,5 +116,5 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 del wedges[key]
 
 
-        print('elapsed time:', time.time() - start)
+        #print('elapsed time:', time.time() - start)
         return not_occluded
