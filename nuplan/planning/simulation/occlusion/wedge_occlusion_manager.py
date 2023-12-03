@@ -89,7 +89,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                     break
 
                 wedge_idx = (index_of_correct_wedge + i) % self.num_wedges
-                if wedge_idx % self.num_wedges in wedges:
+                if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
                         not_occluded.add(target.metadata.track_token)
@@ -111,7 +111,6 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                             break
                     else: 
                         left_off_target = True
-
 
             for key in to_remove:
                 del wedges[key]
