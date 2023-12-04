@@ -1,0 +1,10 @@
+# @package _global_
+job_name: closed_loop_multiagent
+
+defaults:
+  - override /observation: ml_planner_agents_observation #ml_planner
+  - override /ego_controller: two_stage_controller
+  - override /planner: ml_planner
+  - override /simulation_metric: simulation_closed_loop_reactive_agents
+  - override /metric_aggregator:
+      - closed_loop_multiagent_weighted_average
