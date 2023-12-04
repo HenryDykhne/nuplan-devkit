@@ -82,7 +82,7 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
                     radians = abs(math.atan2(neighbor_1.x*neighbor_2.y - neighbor_1.y*neighbor_2.x, neighbor_1.x*neighbor_2.x + neighbor_1.y*neighbor_2.y ))
                     if radians > self.min_rad:
                         not_occluded.add(target.metadata.track_token)
-                except: # but if the target is on top of you, you can probably see it
+                except ValueError: # but if the target is on top of you, you can probably see it
                     not_occluded.add(target.metadata.track_token)
                     
         # print('elapsed time:', time.time() - start)

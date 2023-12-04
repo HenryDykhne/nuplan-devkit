@@ -41,7 +41,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
 
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
-        #start = time.time()
+        start = time.time()
         rads = np.linspace(0,2*math.pi,self.num_wedges+1)
         wedges = dict()
 
@@ -66,8 +66,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             target_poly = Polygon(corners)
 
             angle = math.atan2(target.center.y - observer.center.y, target.center.x - observer.center.x) # we get the angle relative to the observer
-
-            index_of_correct_wedge = int((angle * self.num_wedges) // (2 * math.pi))
+            index_of_correct_wedge = int((angle * self.num_wedges) // (2 * math.pi)) # we find the wedge that covers that angle
 
             to_remove = set()
             if index_of_correct_wedge in wedges:
@@ -75,18 +74,27 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 not_occluded.add(target.metadata.track_token)
                 if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                     to_remove.add(index_of_correct_wedge)
+                else:
+                    continue # if it is not a vehicle, it cannot block any wedges and so we should just proceed to the next target
             
-            right_off_target = False
-            left_off_target = False
+            # here, we want to limit the wedges we check to only those that hit the target
+            # we do this by calculating the maximum possible angular diameter in the way that can be seen here:
+            # https://rechneronline.de/sehwinkel/angular-diameter.php
             max_possible_crossection = ((corners_list[0].x-corners_list[2].x)**2+(corners_list[0].y-corners_list[2].y)**2)**0.5
             dist = ((target.center.x - observer.center.x)**2 + (target.center.y - observer.center.y)**2)**0.5
-            angular_diameter = 2 * math.atan(max_possible_crossection/(2 * dist))
+            angular_diameter = 2 * math.atan(max_possible_crossection/(2 * dist)) # angular diameteris
+            
+            # with the angular diameter, we can calculate the maximum number of wedges to either side of the center the car can take up
             num_wedges_to_check_to_each_side = int((((angular_diameter / 2) * self.num_wedges) // (2 * math.pi)) + 1)
+            
+            # here, we check wedges, fanning out from the center of the target till we stop seeing the target
+            counterclockwise_off_target = False
+            clockwise_off_target = False
             for i in range(1, num_wedges_to_check_to_each_side + 1):
-                if right_off_target and left_off_target:
+                if counterclockwise_off_target and clockwise_off_target:
                     break
-
-                wedge_idx = (index_of_correct_wedge + i) % self.num_wedges
+                
+                wedge_idx = (index_of_correct_wedge + i) % self.num_wedges # fan out counterclockwise
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
@@ -96,23 +104,23 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                         else:
                             break
                     else: 
-                        right_off_target = True
+                        counterclockwise_off_target = True
 
-                wedge_idx = (index_of_correct_wedge - i) % self.num_wedges
+                wedge_idx = (index_of_correct_wedge - i) % self.num_wedges # fan out clockwise
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
                         not_occluded.add(target.metadata.track_token)
                         if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                             to_remove.add(wedge_idx)
-                        else:
+                        else: 
                             break
                     else: 
-                        left_off_target = True
+                        clockwise_off_target = True
 
             for key in to_remove:
                 del wedges[key]
 
 
-        #print('elapsed time:', time.time() - start)
+        print('elapsed time:', time.time() - start)
         return not_occluded
