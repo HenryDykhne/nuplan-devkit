@@ -20,7 +20,7 @@ from nuplan.planning.simulation.simulation_time_controller.simulation_iteration 
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 
 
-OPEN_LOOP_DETECTION_TYPES = ["PEDESTRIAN", "BARRIER", "CZONE_SIGN", "TRAFFIC_CONE", "GENERIC_OBJECT"]
+OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
 
 class MLPlannerAgents(AbstractObservation):
     """
@@ -50,8 +50,9 @@ class MLPlannerAgents(AbstractObservation):
         if not self._agents:
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
-                self._agents[agent.metadata.track_token] = {'agent': agent, \
-                                                   'planner': MLPlanner(self.model)}
+                self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, self._scenario.start_time), \
+                                                            'metadata': agent.metadata,
+                                                            'planner': MLPlanner(self.model)}
                 # TODO: Support ego controllers - right now just doing perfect tracking
                 # TODO: Handle ego-states better
                 # TODO: Handle goals better (lol)
@@ -60,7 +61,7 @@ class MLPlannerAgents(AbstractObservation):
                 frame_off=1
                 while goal is None:
                     last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(self._scenario.get_number_of_iterations()-frame_off)
-                    tracked_set = [track for track in last_scenario_frame.tracked_objects.tracked_objects if track.metadata.track_token == agent.track_token]
+                    tracked_set = [track for track in last_scenario_frame.tracked_objects.tracked_objects if track.metadata.track_token == agent.metadata.track_token]
 
                     if tracked_set:
                         goal = tracked_set[0].center
@@ -69,7 +70,7 @@ class MLPlannerAgents(AbstractObservation):
 
                 planner_init = PlannerInitialization(
                         route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
-                        mission_goal= goal,
+                        mission_goal=goal,
                         map_api=self._scenario.map_api,
                     )
                 
@@ -87,9 +88,10 @@ class MLPlannerAgents(AbstractObservation):
             
     def get_observation(self) -> DetectionsTracks:
         """Inherited, see superclass."""
-        agents = [v['agent'] for k, v in self._get_agents().items()]
+        agents = [self._build_agent_from_ego_state(v['ego_state'], v['metadata']) for k, v in self._get_agents().items()]
         open_loop_detections = self._get_open_loop_track_objects(self.current_iteration)
-        return DetectionsTracks(tracked_objects=TrackedObjects(agents+open_loop_detections))
+        open_loop_detections.extend(agents)
+        return DetectionsTracks(tracked_objects=TrackedObjects(open_loop_detections))
     
     def update_observation(
         self, iteration: SimulationIteration, next_iteration: SimulationIteration, history: SimulationHistoryBuffer
@@ -112,12 +114,20 @@ class MLPlannerAgents(AbstractObservation):
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         for agent_token, agent_data in self._agents.items():
-            history_input = self._build_history_input(agent_token, agent_data['agent'], history)
+            history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
             planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
             trajectory = agent_data['planner'].compute_trajectory(planner_input)
-            agent_data['agent'] = self._build_agent_from_ego_state(trajectory.get_state_at_time(next_iteration.time_point), agent_data['agent'].metadata)
-
+            agent_data['ego_state'] = trajectory.get_state_at_time(next_iteration.time_point)
+            self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
+            
     def _build_ego_state_from_agent(self, agent: Agent, time_point: TimePoint) -> EgoState:
+
+        if agent.metadata.track_token in self._ego_state_history:
+            if time_point in self._ego_state_history[agent.metadata.track_token]:
+                return self._ego_state_history[agent.metadata.track_token][time_point]
+        else:
+            self._ego_state_history[agent.metadata.track_token] = {}
+
         output = EgoState.build_from_center(
             center=agent.center,
             center_velocity_2d=agent.velocity,
@@ -127,6 +137,8 @@ class MLPlannerAgents(AbstractObservation):
             vehicle_parameters=get_pacifica_parameters(),
             #angular_vel=agent.angular_velocity if agent.angular_velocity is not None else 0.0
         )
+
+        self._ego_state_history[agent.metadata.track_token][time_point] = output
         return output
     
     def _build_agent_from_ego_state(self, ego_state: EgoState, scene_object_metadata: SceneObjectMetadata) -> Agent:
@@ -139,19 +151,31 @@ class MLPlannerAgents(AbstractObservation):
         )
         return agent_state
     
-    def _build_history_input(self, agent_track_token: str, agent_data: Agent, history: SimulationHistoryBuffer) -> SimulationHistoryBuffer:
-        ego_observations = [self._build_agent_from_ego_state(es, SceneObjectMetadata(token='ego', track_token="ego", track_id=-1, timestamp_us=es.time_us)) for es in history.ego_state_buffer]
-        
-        faux_ego_obervations = [self._build_ego_state_from_agent([ag for ag in ob.tracked_objects.tracked_objects if \
-                                                                  ag.metadata.track_token == agent_track_token][0] if [ag for ag in ob.tracked_objects.tracked_objects if \
-                                                                  ag.metadata.track_token == agent_track_token] else agent_data, ego.time_point) \
-                                                                    for ob,ego in zip(history.observation_buffer, history.ego_state_buffer)]
+    def _build_history_input(self, agent_track_token: str, current_state: EgoState, history: SimulationHistoryBuffer) -> SimulationHistoryBuffer:
+
+        ego_state_buffer = history.ego_state_buffer
+        observation_buffer = history.observation_buffer
 
         new_observations = []
-        for observation, ego in zip(history.observation_buffer, ego_observations):
+        faux_ego_obervations = []
+
+        for t, (ego_state, observation) in enumerate(zip(ego_state_buffer, observation_buffer)):
+            ego_agent_object = self._build_agent_from_ego_state(ego_state, SceneObjectMetadata(token='ego', track_token="ego", track_id=-1, timestamp_us=ego_state.time_us))
+            
+            i = t
+            matched_obs = []
+            while not matched_obs:
+                matched_obs = [ag for ag in observation_buffer[i].tracked_objects.tracked_objects if ag.metadata.track_token == agent_track_token]
+                i += 1
+            
+            faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
+
             tracks = [ag for ag in observation.tracked_objects.tracked_objects if ag.metadata.track_token != agent_track_token]
-            tracks.append(ego)
+            tracks.append(ego_agent_object)
+
+    
             new_observations.append(DetectionsTracks(tracked_objects=TrackedObjects(tracks)))
+            faux_ego_obervations.append(faux_ego_observation)
     
 
         output_buffer = SimulationHistoryBuffer(deque(faux_ego_obervations), \
