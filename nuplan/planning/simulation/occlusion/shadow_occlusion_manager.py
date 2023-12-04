@@ -77,10 +77,14 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
             
             hull = unary_union([diff_poly, observer_origin]).convex_hull
             if isinstance(hull, Polygon):
-                neighbor_1, neighbor_2 = self._get_two_neighbors(self.ORIG, hull)
-                radians = abs(math.atan2(neighbor_1.x*neighbor_2.y - neighbor_1.y*neighbor_2.x, neighbor_1.x*neighbor_2.x + neighbor_1.y*neighbor_2.y ))
-                if radians > self.min_rad:
+                try: #if the convex hull formed does not include the origin such as in the case where the target is on top of the observer, an error will be thrown
+                    neighbor_1, neighbor_2 = self._get_two_neighbors(self.ORIG, hull)
+                    radians = abs(math.atan2(neighbor_1.x*neighbor_2.y - neighbor_1.y*neighbor_2.x, neighbor_1.x*neighbor_2.x + neighbor_1.y*neighbor_2.y ))
+                    if radians > self.min_rad:
+                        not_occluded.add(target.metadata.track_token)
+                except: # but if the target is on top of you, you can probably see it
                     not_occluded.add(target.metadata.track_token)
+                    
         # print('elapsed time:', time.time() - start)
         return not_occluded
     

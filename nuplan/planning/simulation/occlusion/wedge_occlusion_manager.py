@@ -24,7 +24,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
         self,
         scenario: AbstractScenario,
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
-        num_wedges: float = 180 # gives wedge width of roughly 2 degrees
+        num_wedges: float = 360 # 360 gives wedge width of roughly 1 degrees
 
     ):
         super().__init__(scenario)
