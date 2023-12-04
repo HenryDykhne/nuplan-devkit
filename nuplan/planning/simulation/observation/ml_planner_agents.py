@@ -1,4 +1,5 @@
 from collections import deque
+from copy import deepcopy
 from typing import Dict, List, Type
 
 from nuplan.common.actor_state.agent import Agent
@@ -173,11 +174,15 @@ class MLPlannerAgents(AbstractObservation):
             
             i = t
             matched_obs = []
-            while not matched_obs:
+            while not matched_obs and i < len(observation_buffer):
                 matched_obs = [ag for ag in observation_buffer[i].tracked_objects.tracked_objects if ag.metadata.track_token == agent_track_token]
                 i += 1
-            
-            faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
+                    
+            if not matched_obs:
+                faux_ego_observation = deepcopy(current_state)
+                faux_ego_observation._time_point = ego_state.time_point
+            else:
+                faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
 
             tracks = [ag for ag in observation.tracked_objects.tracked_objects if ag.metadata.track_token != agent_track_token]
             tracks.append(ego_agent_object)
@@ -204,4 +209,4 @@ class MLPlannerAgents(AbstractObservation):
                 map_api=self._scenario.map_api,
             )
         
-        self.agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+        self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
