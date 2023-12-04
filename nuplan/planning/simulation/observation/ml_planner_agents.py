@@ -7,7 +7,7 @@ from nuplan.common.actor_state.scene_object import SceneObjectMetadata
 from nuplan.common.actor_state.state_representation import StateSE2, StateVector2D, TimePoint
 from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
-from nuplan.common.actor_state.vehicle_parameters import get_pacifica_parameters
+from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
@@ -134,7 +134,16 @@ class MLPlannerAgents(AbstractObservation):
             center_acceleration_2d=StateVector2D(0, 0),
             tire_steering_angle=0,
             time_point=time_point,
-            vehicle_parameters=get_pacifica_parameters(),
+            vehicle_parameters=VehicleParameters(
+                        vehicle_name=agent.track_token,
+                        vehicle_type="gen1",
+                        width=agent.box.width,
+                        front_length=agent.box.length * 4 / 5,
+                        rear_length=agent.box.length * 1 / 5,
+                        wheel_base=agent.box.length * 3 / 5,
+                        cog_position_from_rear_axle=agent.box.length * 1.5 / 5,
+                        height=agent.box.height,
+                    ),
             #angular_vel=agent.angular_velocity if agent.angular_velocity is not None else 0.0
         )
 
@@ -184,10 +193,11 @@ class MLPlannerAgents(AbstractObservation):
 
         return output_buffer
     
-    def add_agent_to_scene(self, agent: Agent, goal: StateSE2):
-        self._agents[agent.metadata.track_token] = {'agent': agent, \
-                                            'planner': MLPlanner(self.model)}
-        
+    def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint: TimePoint):
+
+        self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, timepoint), \
+                                                    'metadata': agent.metadata,
+                                                    'planner': MLPlanner(self.model)}
         planner_init = PlannerInitialization(
                 route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
                 mission_goal=goal,
