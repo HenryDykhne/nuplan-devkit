@@ -21,7 +21,9 @@ from nuplan.planning.simulation.simulation_time_controller.simulation_iteration 
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 
 
-OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
+OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, \
+                             TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, \
+                             TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
 
 class MLPlannerAgents(AbstractObservation):
     """
@@ -37,38 +39,49 @@ class MLPlannerAgents(AbstractObservation):
         self.current_iteration = 0
         self.model = model
         self._scenario = scenario
-        self._ego_state_history = {}
-        self._agents: Dict = None
+        self._ego_state_history: Dict = {}
+        self._agents: Dict = None    
 
     def reset(self) -> None:
         """Inherited, see superclass."""
         self.current_iteration = 0
         self._agents = None
-
+    
     def _get_agents(self):
-
+        """
+        Gets dict of tracked agents, or lazily creates them it 
+        from vehicles at simulation start if it does not exist.
+        """
 
         if not self._agents:
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
+
+                # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
                 self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, self._scenario.start_time), \
                                                             'metadata': agent.metadata,
                                                             'planner': MLPlanner(self.model)}
-                # TODO: Support ego controllers - right now just doing perfect tracking
-                # TODO: Handle ego-states better
-                # TODO: Handle goals better (lol)
+                
+                # TODO: Support ego controllers - right now just doing perfect tracking.
+                #       Revist whether there is a better way of translating agent states to ego states. 
+                #       Revist whether there is a better way of setting agent goals.
+                #       Filter out impossible/off-road initial detections.
 
+                # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
+                # if the agent disappears early in a scene.
                 goal = None
                 frame_off=1
                 while goal is None:
                     last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(self._scenario.get_number_of_iterations()-frame_off)
-                    tracked_set = [track for track in last_scenario_frame.tracked_objects.tracked_objects if track.metadata.track_token == agent.metadata.track_token]
+                    tracked_set = [track for track in last_scenario_frame.tracked_objects.tracked_objects if\
+                                    track.metadata.track_token == agent.metadata.track_token]
 
                     if tracked_set:
                         goal = tracked_set[0].center
                     else: 
                         frame_off += 1
 
+                # Initialize planner.
                 planner_init = PlannerInitialization(
                         route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
                         mission_goal=goal,
@@ -107,10 +120,15 @@ class MLPlannerAgents(AbstractObservation):
         :param iteration: The simulation iteration.
         :return: A list of TrackedObjects.
         """
+
         detections = self._scenario.get_tracked_objects_at_iteration(iteration) 
         return detections.tracked_objects.get_tracked_objects_of_types(OPEN_LOOP_DETECTION_TYPES) 
 
     def propagate_agents(self, iteration: SimulationIteration, next_iteration: SimulationIteration, history: SimulationHistoryBuffer):
+        """
+        Propagates agents into next timestep by constructing input for each agent planner, then interpolating new agent
+        states from the predicted trajectory for each from their respective planners. Caches computed agent states.
+        """
 
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
@@ -122,6 +140,10 @@ class MLPlannerAgents(AbstractObservation):
             self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
             
     def _build_ego_state_from_agent(self, agent: Agent, time_point: TimePoint) -> EgoState:
+        """
+        Builds ego state from corresponding agent state. Since this process is imperfect, it uses cached ego states from the propagation
+        so casting is only required for the beginning agent states for which we have no propagation information.
+        """
 
         if agent.metadata.track_token in self._ego_state_history:
             if time_point in self._ego_state_history[agent.metadata.track_token]:
@@ -129,6 +151,7 @@ class MLPlannerAgents(AbstractObservation):
         else:
             self._ego_state_history[agent.metadata.track_token] = {}
 
+        # Most of this is just eyeballed, so there may be a more principled way of setting these values.
         output = EgoState.build_from_center(
             center=agent.center,
             center_velocity_2d=agent.velocity,
@@ -145,49 +168,63 @@ class MLPlannerAgents(AbstractObservation):
                         cog_position_from_rear_axle=agent.box.length * 1.5 / 5,
                         height=agent.box.height,
                     ),
-            #angular_vel=agent.angular_velocity if agent.angular_velocity is not None else 0.0
         )
 
         self._ego_state_history[agent.metadata.track_token][time_point] = output
         return output
     
     def _build_agent_from_ego_state(self, ego_state: EgoState, scene_object_metadata: SceneObjectMetadata) -> Agent:
+        """
+        Builds agent state from corresponding ego state. Unlike the inverse this process is well-defined.
+        """
+
         agent_state = Agent(
             metadata=scene_object_metadata,
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=ego_state.car_footprint.oriented_box,
             velocity=ego_state.dynamic_car_state.center_velocity_2d,
-            #angular_velocity=ego_state.dynamic_car_state.angular_velocity
         )
         return agent_state
     
     def _build_history_input(self, agent_track_token: str, current_state: EgoState, history: SimulationHistoryBuffer) -> SimulationHistoryBuffer:
-
+        """
+        Builds the planner history input for a given agent. This requires us the interchange the ego states of the actual ego with the 
+        constructed ego states of the agent of interest, and create observations corresponding to the ego in the observation history buffer.
+        """
         ego_state_buffer = history.ego_state_buffer
         observation_buffer = history.observation_buffer
 
         new_observations = []
         faux_ego_obervations = []
 
+        # Loop through history buffer
         for t, (ego_state, observation) in enumerate(zip(ego_state_buffer, observation_buffer)):
-            ego_agent_object = self._build_agent_from_ego_state(ego_state, SceneObjectMetadata(token='ego', track_token="ego", track_id=-1, timestamp_us=ego_state.time_us))
+
+            # Convert actual ego state into agent object
+            ego_agent_object = self._build_agent_from_ego_state(ego_state, \
+                                                                SceneObjectMetadata(token='ego', track_token="ego", track_id=-1, \
+                                                                                    timestamp_us=ego_state.time_us))
             
+            # Get agent object corresponding to agent from observation buffer. If one does not exist for current timestep, take from the future,
+            # if one does not exist from the future, take the current state. 
             i = t
             matched_obs = []
             while not matched_obs and i < len(observation_buffer):
                 matched_obs = [ag for ag in observation_buffer[i].tracked_objects.tracked_objects if ag.metadata.track_token == agent_track_token]
                 i += 1
                     
+            # Convert agent state to a corresponding "ego state" object, or pull it from cache if already computed.
             if not matched_obs:
                 faux_ego_observation = deepcopy(current_state)
                 faux_ego_observation._time_point = ego_state.time_point
             else:
                 faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
 
+
+            # Rebuild timestep and buffer
             tracks = [ag for ag in observation.tracked_objects.tracked_objects if ag.metadata.track_token != agent_track_token]
             tracks.append(ego_agent_object)
 
-    
             new_observations.append(DetectionsTracks(tracked_objects=TrackedObjects(tracks)))
             faux_ego_obervations.append(faux_ego_observation)
     
@@ -198,9 +235,12 @@ class MLPlannerAgents(AbstractObservation):
 
         return output_buffer
     
-    def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint: TimePoint):
+    def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint_record: TimePoint):
+        """
+        Adds agent to the scene with a given goal during the simulation runtime.
+        """
 
-        self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, timepoint), \
+        self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                                                     'metadata': agent.metadata,
                                                     'planner': MLPlanner(self.model)}
         planner_init = PlannerInitialization(
