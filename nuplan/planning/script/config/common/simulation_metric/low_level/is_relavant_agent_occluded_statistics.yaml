@@ -1,0 +1,9 @@
+is_relavant_agent_occluded_statistics:
+  _target_: nuplan.planning.metrics.evaluation_metrics.common.is_relavant_agent_occluded.IsRelavantAgentOccludedStatistics
+  _convert_: 'all'
+  name: 'is_relavant_agent_occluded'
+  category: 'Occlusions'
+
+  occlusion_window_before_intersection: 5
+  intersection_delta: 3
+  buf_distance: 1
