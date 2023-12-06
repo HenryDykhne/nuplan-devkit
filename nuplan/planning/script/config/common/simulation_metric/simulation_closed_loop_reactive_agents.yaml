@@ -1,5 +1,5 @@
 defaults:
-  # - common_metrics  # Uncomment this for common information about the scenario as specified in the config
+  - common_metrics  # Uncomment this for common information about the scenario as specified in the config
   - low_level: # Low level metrics
       - ego_lane_change_statistics
       - ego_jerk_statistics

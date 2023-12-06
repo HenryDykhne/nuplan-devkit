@@ -1,5 +1,5 @@
 defaults:
-  # - common_metrics  # Uncomment this for common information about the scenario as specified in the config
+  - common_metrics  # Uncomment this for common information about the scenario as specified in the config
   - low_level:  # Low level metrics
       - planner_expert_average_l2_error_within_bound_statistics
   - high_level:  # High level metrics that depend on low level metrics, they can also rely on the previously called high level metrics
