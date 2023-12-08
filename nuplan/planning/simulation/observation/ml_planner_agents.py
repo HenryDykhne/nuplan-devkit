@@ -102,7 +102,7 @@ class MLPlannerAgents(AbstractObservation):
             
     def get_observation(self) -> DetectionsTracks:
         """Inherited, see superclass."""
-        agents = [self._build_agent_from_ego_state(v['ego_state'], v['metadata']) for k, v in self._get_agents().items()]
+        agents = [self._build_agent_from_ego_state(v['ego_state'], v['metadata']) for v in self._get_agents().values()]
         open_loop_detections = self._get_open_loop_track_objects(self.current_iteration)
         open_loop_detections.extend(agents)
         return DetectionsTracks(tracked_objects=TrackedObjects(open_loop_detections))
@@ -132,6 +132,7 @@ class MLPlannerAgents(AbstractObservation):
 
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
+        # TODO: Find way to parallelize.
         for agent_token, agent_data in self._agents.items():
             history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
             planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
@@ -214,14 +215,14 @@ class MLPlannerAgents(AbstractObservation):
                 i += 1
                     
             # Convert agent state to a corresponding "ego state" object, or pull it from cache if already computed.
-            if not matched_obs:
+            if len(matched_obs) == 0:
                 faux_ego_observation = deepcopy(current_state)
                 faux_ego_observation._time_point = ego_state.time_point
             else:
                 faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
 
 
-            # Rebuild timestep and buffer
+            # Rebuild timestep and buffer - creating a new observations object with old ego appended.
             tracks = [ag for ag in observation.tracked_objects.tracked_objects if ag.metadata.track_token != agent_track_token]
             tracks.append(ego_agent_object)
 
@@ -239,6 +240,7 @@ class MLPlannerAgents(AbstractObservation):
         """
         Adds agent to the scene with a given goal during the simulation runtime.
         """
+        # TODO: Inject IDM agents (and non-ML agents more broadly)
 
         self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                                                     'metadata': agent.metadata,
