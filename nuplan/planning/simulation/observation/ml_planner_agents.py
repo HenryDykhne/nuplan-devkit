@@ -199,6 +199,13 @@ class MLPlannerAgents(AbstractObservation):
         new_observations = []
         faux_ego_obervations = []
 
+        # Construct a timestep/track_token to observation loopup table for faster proessing
+        track_token_agent_dict = {}
+        for t, observation in enumerate(observation_buffer):
+            track_token_agent_dict[t] = {}
+            for agent in observation.tracked_objects.tracked_objects:
+                track_token_agent_dict[t][agent.metadata.track_token] = agent
+
         # Loop through history buffer
         for t, (ego_state, observation) in enumerate(zip(ego_state_buffer, observation_buffer)):
 
@@ -210,18 +217,19 @@ class MLPlannerAgents(AbstractObservation):
             # Get agent object corresponding to agent from observation buffer. If one does not exist for current timestep, take from the future,
             # if one does not exist from the future, take the current state. This might occur at the first timestep for observations that have no
             # logged  history prior to simulation start, or observations inserted mid-simulation.
-            i = t
-            matched_obs = []
-            while len(matched_obs) == 0 and i < len(observation_buffer):
-                matched_obs = [ag for ag in observation_buffer[i].tracked_objects.tracked_objects if ag.metadata.track_token == agent_track_token]
-                i += 1
+            matched_agent = None
+
+            for i in range(t, len(observation_buffer)):
+                if i in track_token_agent_dict and agent_track_token in track_token_agent_dict[i]:
+                    matched_agent = track_token_agent_dict[i][agent_track_token]
+                    break
                     
             # Convert agent state to a corresponding "ego state" object, or pull it from cache if already computed.
-            if len(matched_obs) == 0:
+            if matched_agent is None:
                 faux_ego_observation = deepcopy(current_state)
                 faux_ego_observation._time_point = ego_state.time_point
             else:
-                faux_ego_observation = self._build_ego_state_from_agent(matched_obs[0], ego_state.time_point)
+                faux_ego_observation = self._build_ego_state_from_agent(matched_agent, ego_state.time_point)
 
 
             # Rebuild timestep and buffer - creating a new observations object with old ego appended.
