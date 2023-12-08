@@ -133,6 +133,7 @@ class MLPlannerAgents(AbstractObservation):
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         # TODO: Find way to parallelize.
+        # TODO: Propagate non-ego and lower frequency to improve performance.
         for agent_token, agent_data in self._agents.items():
             history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
             planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
@@ -207,10 +208,11 @@ class MLPlannerAgents(AbstractObservation):
                                                                                     timestamp_us=ego_state.time_us))
             
             # Get agent object corresponding to agent from observation buffer. If one does not exist for current timestep, take from the future,
-            # if one does not exist from the future, take the current state. 
+            # if one does not exist from the future, take the current state. This might occur at the first timestep for observations that have no
+            # logged  history prior to simulation start, or observations inserted mid-simulation.
             i = t
             matched_obs = []
-            while not matched_obs and i < len(observation_buffer):
+            while len(matched_obs) == 0 and i < len(observation_buffer):
                 matched_obs = [ag for ag in observation_buffer[i].tracked_objects.tracked_objects if ag.metadata.track_token == agent_track_token]
                 i += 1
                     
