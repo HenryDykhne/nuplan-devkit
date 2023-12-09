@@ -13,6 +13,7 @@ defaults:
       - open_loop_boxes_weighted_average
       - closed_loop_nonreactive_agents_weighted_average
       - closed_loop_reactive_agents_weighted_average
+      - closed_loop_multiagent_weighted_average
 
   - override hydra/job_logging: none                            # Disable hydra's logging
   - override hydra/hydra_logging: none                          # Disable hydra's logging
