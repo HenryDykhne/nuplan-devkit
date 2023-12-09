@@ -40,6 +40,7 @@ class MLPlannerAgents(AbstractObservation):
         self.model = model
         self._scenario = scenario
         self._ego_state_history: Dict = {}
+        self._agent_prescence_threshold = 10
         self._agents: Dict = None    
 
     def reset(self) -> None:
@@ -57,10 +58,6 @@ class MLPlannerAgents(AbstractObservation):
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
-                # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, self._scenario.start_time), \
-                                                            'metadata': agent.metadata,
-                                                            'planner': MLPlanner(self.model)}
                 
                 # TODO: Support ego controllers - right now just doing perfect tracking.
                 #       Revist whether there is a better way of translating agent states to ego states. 
@@ -70,25 +67,32 @@ class MLPlannerAgents(AbstractObservation):
                 # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
                 # if the agent disappears early in a scene.
                 goal = None
-                frame_off=1
-                while goal is None:
-                    last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(self._scenario.get_number_of_iterations()-frame_off)
-                    tracked_set = [track for track in last_scenario_frame.tracked_objects.tracked_objects if\
-                                    track.metadata.track_token == agent.metadata.track_token]
 
-                    if tracked_set:
-                        goal = tracked_set[0].center
-                    else: 
-                        frame_off += 1
+                for frame in range(self._scenario.get_number_of_iterations()-1, self._agent_prescence_threshold, -1):
+                    last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
+                    matched_track = None
+                    for track in last_scenario_frame.tracked_objects.tracked_objects:
+                        if track.metadata.track_token == agent.metadata.track_token:
+                            matched_track = track
+                            break
+                    
+                    if matched_track:
+                        goal = matched_track.center
+                        break
 
-                # Initialize planner.
-                planner_init = PlannerInitialization(
-                        route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
-                        mission_goal=goal,
-                        map_api=self._scenario.map_api,
-                    )
-                
-                self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+                if goal:
+                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
+                    self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, self._scenario.start_time), \
+                                                                'metadata': agent.metadata,
+                                                                'planner': MLPlanner(self.model)}
+                    # Initialize planner.
+                    planner_init = PlannerInitialization(
+                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+                            mission_goal=goal,
+                            map_api=self._scenario.map_api,
+                        )
+                    
+                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
         return self._agents
 
