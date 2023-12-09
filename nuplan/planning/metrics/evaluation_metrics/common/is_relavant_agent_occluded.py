@@ -51,18 +51,6 @@ class IsRelavantAgentOccludedStatistics(MetricBase):
         """Inherited, see superclass."""
         return float(metric_statistics[0].value)
 
-    def is_relaevant_agent_occluded(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
-        """_summary_
-        :param history: _description_
-        :param scenario: _description_
-        :raises Exception: _description_
-        :return: _description_
-        """
-        if 1 is None: 
-            pass
-        else:
-            raise Exception()
-
 
     def is_relavant_agent_occluded(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
         """
