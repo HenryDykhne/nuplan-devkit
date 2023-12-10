@@ -122,5 +122,5 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 del wedges[key]
 
 
-        print('elapsed time:', time.time() - start)
+        #print('elapsed time:', time.time() - start)
         return not_occluded

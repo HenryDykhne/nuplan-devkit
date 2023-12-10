@@ -15,6 +15,7 @@ from nuplan.planning.simulation.history.simulation_history_buffer import Simulat
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
 from nuplan.planning.simulation.observation.observation_type import Observation
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
+from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.planner.ml_planner.ml_planner import MLPlanner
 from nuplan.planning.simulation.simulation_time_controller.simulation_iteration import SimulationIteration
@@ -30,7 +31,7 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario) -> None:
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
@@ -39,15 +40,22 @@ class MLPlannerAgents(AbstractObservation):
         self.current_iteration = 0
         self.model = model
         self._scenario = scenario
+        self._occlusions = occlusions
         self._ego_state_history: Dict = {}
-        self._agent_prescence_threshold = 10
         self._agents: Dict = None    
+        self._trajectory_cache: Dict = {}
+        self._inference_frequency: float = 0.2
+        self._relevance_distance: float = 30
+        self._cull_distance: float = 400
+        self._agent_presence_threshold: float = 10
 
     def reset(self) -> None:
         """Inherited, see superclass."""
         self.current_iteration = 0
         self._agents = None
-    
+        self._trajectory_cache = {}
+        self._ego_state_history = {}
+        
     def _get_agents(self):
         """
         Gets dict of tracked agents, or lazily creates them it 
@@ -66,25 +74,12 @@ class MLPlannerAgents(AbstractObservation):
 
                 # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
                 # if the agent disappears early in a scene.
-                goal = None
-
-                for frame in range(self._scenario.get_number_of_iterations()-1, self._agent_prescence_threshold, -1):
-                    last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
-                    matched_track = None
-                    for track in last_scenario_frame.tracked_objects.tracked_objects:
-                        if track.metadata.track_token == agent.metadata.track_token:
-                            matched_track = track
-                            break
-                    
-                    if matched_track:
-                        goal = matched_track.center
-                        break
-
+                goal = self._get_historical_agent_goal(agent, self.current_iteration)
+                #print(goal)
                 if goal:
                     # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                    self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, self._scenario.start_time), \
-                                                                'metadata': agent.metadata,
-                                                                'planner': MLPlanner(self.model)}
+                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
+
                     # Initialize planner.
                     planner_init = PlannerInitialization(
                             route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
@@ -116,6 +111,7 @@ class MLPlannerAgents(AbstractObservation):
     ) -> None:
         """Inherited, see superclass."""
         self.current_iteration = next_iteration.index
+        #self._add_newly_detected_agents(next_iteration) #- Adds new agents. This causes some weird behaviour, so commented out for now.
         self.propagate_agents(iteration, next_iteration, history)
 
     def _get_open_loop_track_objects(self, iteration: int) -> List[TrackedObject]:
@@ -139,9 +135,21 @@ class MLPlannerAgents(AbstractObservation):
         # TODO: Find way to parallelize.
         # TODO: Propagate non-ego and lower frequency to improve performance.
         for agent_token, agent_data in self._agents.items():
-            history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
-            planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
-            trajectory = agent_data['planner'].compute_trajectory(planner_input)
+            if agent_token in self._trajectory_cache and \
+                (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._inference_frequency and \
+            (((agent_data['ego_state'].center.x - history.current_state[0].center.x) ** 2 + \
+                (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._relevance_distance:
+                     trajectory = self._trajectory_cache[agent_token][1]
+            else:
+                history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
+
+                if agent_data['occlusion'] is not None:
+                    planner_input = agent_data['occlusion'].occlude_input(history_input)
+
+                planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)                    
+                trajectory = agent_data['planner'].compute_trajectory(planner_input)
+                self._trajectory_cache[agent_token] = (next_iteration.time_point.time_s, trajectory)
+
             agent_data['ego_state'] = trajectory.get_state_at_time(next_iteration.time_point)
             self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
             
@@ -256,9 +264,8 @@ class MLPlannerAgents(AbstractObservation):
         """
         # TODO: Inject IDM agents (and non-ML agents more broadly)
 
-        self._agents[agent.metadata.track_token] = {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
-                                                    'metadata': agent.metadata,
-                                                    'planner': MLPlanner(self.model)}
+        self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
+
         planner_init = PlannerInitialization(
                 route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
                 mission_goal=goal,
@@ -266,3 +273,36 @@ class MLPlannerAgents(AbstractObservation):
             )
         
         self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+    def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
+        return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
+                'metadata': agent.metadata,
+                'planner': MLPlanner(self.model),
+                'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
+    
+    def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
+        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index+self._agent_presence_threshold, -1):
+            last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
+            for track in last_scenario_frame.tracked_objects.tracked_objects:
+                if track.metadata.track_token == agent.metadata.track_token:
+                    return track.center
+
+        return None
+    
+    def _add_newly_detected_agents(self, next_iteration: SimulationIteration):
+        for agent in self._scenario.get_tracked_objects_at_iteration(next_iteration.index).tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
+            if agent.metadata.track_token not in self._agents:
+                goal = self._get_historical_agent_goal(agent, next_iteration.index)
+
+                if goal:
+                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
+                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, next_iteration.time_point)
+
+                    # Initialize planner.
+                    planner_init = PlannerInitialization(
+                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+                            mission_goal=goal,
+                            map_api=self._scenario.map_api,
+                        )
+                    
+                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
