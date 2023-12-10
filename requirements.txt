@@ -33,7 +33,7 @@ pyogrio # A performant backend for geopandas
 pyquaternion>=0.9.5  # Used widely, avoid known bug with quaternion slerp
 pytest    # Used widely
 rasterio  # Used in GpkgMapsDB.py
-ray # Used widely
+ray==2.5.1 # Used widely
 requests  # Used in BlobStore classes
 retry
 rtree # Used in occupancy maps
