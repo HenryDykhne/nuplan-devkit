@@ -45,8 +45,7 @@ class MLPlannerAgents(AbstractObservation):
         self._agents: Dict = None    
         self._trajectory_cache: Dict = {}
         self._inference_frequency: float = 0.2
-        self._relevance_distance: float = 30
-        self._cull_distance: float = 400
+        self._full_inference_distance: float = 30
         self._agent_presence_threshold: float = 10
 
     def reset(self) -> None:
@@ -138,7 +137,7 @@ class MLPlannerAgents(AbstractObservation):
             if agent_token in self._trajectory_cache and \
                 (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._inference_frequency and \
             (((agent_data['ego_state'].center.x - history.current_state[0].center.x) ** 2 + \
-                (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._relevance_distance:
+                (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._full_inference_distance:
                      trajectory = self._trajectory_cache[agent_token][1]
             else:
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
