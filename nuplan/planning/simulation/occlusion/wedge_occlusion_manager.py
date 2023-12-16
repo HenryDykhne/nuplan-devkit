@@ -24,12 +24,14 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
         self,
         scenario: AbstractScenario,
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
-        num_wedges: float = 360 # 360 gives wedge width of roughly 1 degrees
+        num_wedges: float = 720, # 720 gives wedge width of roughly 0.5 degrees
+        required_hits: int = 3 # at least 3 wedges must hit for a vehicle to be labeled visible
 
     ):
         super().__init__(scenario)
         self.horizon_threshold = horizon_threshold
         self.num_wedges = num_wedges
+        self.required_hits = required_hits
 
     def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
         """
@@ -59,6 +61,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
         not_occluded = set() # Visible track token set
 
         for target in sorted_targets:
+            wedge_hits = 0
             corners_list = target.box.all_corners() #Return 4 corners of oriented box (FL, RL, RR, FR) Point2D
             corners = []
             for corner in corners_list:
@@ -71,10 +74,11 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             to_remove = set()
             if index_of_correct_wedge in wedges:
                 wedge = wedges[index_of_correct_wedge]
-                not_occluded.add(target.metadata.track_token)
+                wedge_hits += 1
                 if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                     to_remove.add(index_of_correct_wedge)
                 else:
+                    not_occluded.add(target.metadata.track_token) # we assume objects that are not vehicles like pedestriens are visible if even a single wedge hits them (a compromise for the sake of speed)
                     continue # if it is not a vehicle, it cannot block any wedges and so we should just proceed to the next target
             
             # here, we want to limit the wedges we check to only those that hit the target
@@ -98,10 +102,11 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
-                        not_occluded.add(target.metadata.track_token)
+                        wedge_hits += 1 
                         if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                             to_remove.add(wedge_idx)
                         else:
+                            not_occluded.add(target.metadata.track_token) # we assume objects that are not vehicles like pedestriens are visible if even a single wedge hits them (a compromise for the sake of speed)
                             break
                     else: 
                         counterclockwise_off_target = True
@@ -110,14 +115,18 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
-                        not_occluded.add(target.metadata.track_token)
+                        wedge_hits += 1 
                         if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                             to_remove.add(wedge_idx)
-                        else: 
+                        else:
+                            not_occluded.add(target.metadata.track_token) # we assume objects that are not vehicles like pedestriens are visible if even a single wedge hits them (a compromise for the sake of speed)
                             break
                     else: 
                         clockwise_off_target = True
 
+            if wedge_hits >= self.required_hits:
+                not_occluded.add(target.metadata.track_token)
+                
             for key in to_remove:
                 del wedges[key]
 

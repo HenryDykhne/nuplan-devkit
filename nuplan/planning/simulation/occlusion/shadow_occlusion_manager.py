@@ -26,7 +26,7 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
         self,
         scenario: AbstractScenario,
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
-        min_rad: float = 0.018, # minimum radians that the vehicle must take up to be observed (0.018 = aprox 1 degrees)
+        min_rad: float = 0.026, # minimum radians that the vehicle must take up to be observed (0.026 = aprox 1.5 degrees)
     ):
         super().__init__(scenario)
         self.horizon_threshold = horizon_threshold
