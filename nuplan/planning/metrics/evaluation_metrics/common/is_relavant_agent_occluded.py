@@ -108,12 +108,11 @@ class IsRelavantAgentOccludedStatistics(MetricBase):
         :param scenario: Scenario running this metric
         :return Relavant agent occluded status.
         """
-        start = time.time()
+        # start = time.time()
 
         list_of_occlusion_masks = history.occlusion_masks
 
         if list_of_occlusion_masks is None:
-            print('false')
             return False
         
         list_of_ego_states = history.extract_ego_state
@@ -124,7 +123,6 @@ class IsRelavantAgentOccludedStatistics(MetricBase):
         relavant_agent_tokens = self.determine_relavant_agents(ego_traj, vehicles_tracks)
 
         if len(relavant_agent_tokens) == 0:
-            print('false')
             return False
                 
         # now that we have the relavant agents, we can figure out exactly when they intersect and if they are occluded in the window before then
@@ -150,10 +148,10 @@ class IsRelavantAgentOccludedStatistics(MetricBase):
                         occluded[tracked_object.track_token] = True
                     distance = ((ego_traj[i][0] - tracked_object.center.x)**2 + (ego_traj[i][1] - tracked_object.center.y)**2)**0.5
                     if abs(i - j) <= intersection_delta_timesteps and distance < self.buf_distance * 2 and occluded[tracked_object.track_token]:
-                        print('time elapsed true', time.time() - start)
+                        # print('time elapsed true', time.time() - start)
                         return True
-        print('scenario', scenario.token)
-        print('time elapsed false', time.time() - start) 
+        # print('scenario', scenario.token)
+        # print('time elapsed false', time.time() - start) 
         return False
 
     def compute(self, history: SimulationHistory, scenario: AbstractScenario) -> List[MetricStatistics]:
