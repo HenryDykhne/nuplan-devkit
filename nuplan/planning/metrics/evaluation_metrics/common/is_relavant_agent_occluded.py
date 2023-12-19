@@ -131,7 +131,7 @@ class IsRelavantAgentOccludedStatistics(MetricBase):
         #print('occlusion_window_timesteps', occlusion_window_timesteps)
         #print('intersection_delta_timesteps', intersection_delta_timesteps)
         tracked_objects_by_time = []
-        print('numrel agents', len(relavant_agent_tokens))
+        #print('numrel agents', len(relavant_agent_tokens))
         #print('scenario', scenario.scenario_name, scenario.token)
         for i in range(scenario.get_number_of_iterations() - 1):
             tracked_objects_by_time.append([obj 

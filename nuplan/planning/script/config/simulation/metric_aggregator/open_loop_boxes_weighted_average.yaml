@@ -5,6 +5,7 @@ open_loop_boxes_weighted_average:
   # if not specified, the weight is set as default.
     # metric name : metric weight in the weighted average function
     is_relavant_agent_occluded: 0.0 # this metric is only for our occlusion stuff so it should not affect the other weights
+    can_scenario_be_made_dangerous: 0.0 # this metric is only for our occlusion stuff so it should not affect the other weights
     planner_expert_average_l2_error_within_bound: 1 # Default is also 1, keeping here for easier understanding of the structure
     planner_expert_average_heading_error_within_bound: 2
     planner_expert_final_l2_error_within_bound: 1 # Default is also 1, keeping here for easier understanding of the structure
