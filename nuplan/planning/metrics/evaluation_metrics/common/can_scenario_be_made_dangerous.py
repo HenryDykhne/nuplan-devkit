@@ -14,9 +14,12 @@ from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_
 from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject, LaneConnector, Lane
 from nuplan.common.maps.maps_datatypes import TrafficLightStatusType
 
+from nuplan.common.actor_state.agent import Agent
 
-from shapely.geometry import Point, LineString, Polygon
-from collections import deque 
+
+from shapely.geometry import Point, LineString, MultiLineString
+from shapely.ops import linemerge
+
 import time
 
 
@@ -49,7 +52,36 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         """Inherited, see superclass."""
         return float(metric_statistics[0].value)
     
-    def get_non_red_connectors(self, traffic_light_status, map_api, agent) -> set:
+    def cut(self, line: LineString, distance: float):
+        if distance <= 0.0 :#line.length:
+            return [None, LineString(line)]
+        elif distance >= 1.0:
+            return [LineString(line), None]
+        coords = list(line.coords)
+        for i, p in enumerate(coords):
+            pd = line.project(Point(p), normalized=True)
+            if pd == distance:
+                return [
+                    LineString(coords[:i+1]),
+                    LineString(coords[i:])]
+            if pd > distance:
+                cp = line.interpolate(distance, normalized=True)
+                return [
+                    LineString(coords[:i] + [(cp.x, cp.y)]),
+                    LineString([(cp.x, cp.y)] + coords[i:])]
+
+    def cut_piece(self, line: LineString, distance1: float, distance2: float):
+        """ From a linestring, this cuts a piece of length lgth at distance.
+        Needs cut(line,distance) func from above ;-)
+        """
+        l1 = self.cut(line, distance1)[1]
+        l2 = self.cut(line, distance2)[0]
+        result = l1.intersection(l2)
+        if type(result) is not MultiLineString:
+            return result
+        return linemerge(result)
+    
+    def get_non_red_connectors(self, traffic_light_status, map_api, agent: Agent) -> set:
         """_summary_
 
         :param traffic_light_status: _description_
@@ -67,7 +99,10 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
                 return {} # if we have made it more than 5 meters into the intersection, other agents can likely see us now and we are either already in danger, or not in danger, but we will never be in a position to make the scenario dangerous
             connectors = [closest_segment]
         elif issubclass(type(closest_segment), Lane):
-            if closest_segment.baseline_path.length - progress > 10: #if we are more than 10 meters from the end of the lane, we are too far away from the intersection to be in danger
+            distance_to_connector = closest_segment.baseline_path.length - progress
+            #if we are moving so slowly, or are so far away that in 5 seconds the agent does not make it to the intersection, we are probably not in danger
+            print('hi there')
+            if  distance_to_connector / agent.velocity.magnitude() > 5:
                 return {}
             connectors = closest_segment.outgoing_edges
         connectors = set(connectors)
@@ -96,17 +131,14 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         return traffic_light_status
 
     def can_scenario_be_made_dangerous(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
-        """_summary_
-
+        """Checks if the scenario can be made dangerous for the ego vehicle (if there are active intersections with vehicles in them)
         :param history: _description_
         :param scenario: _description_
         :return: _description_
         """
         map_api = scenario.map_api
         
-        
         list_of_ego_states = history.extract_ego_state
-        
         
         step_size = 1 #in seconds
         temp_connectors = []
@@ -125,8 +157,9 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             return False
         
         ego_connector = max(temp_connectors, key=Counter(temp_connectors).get) # we grab the most common connector. this is to stop us from accedentally selecting a connector that looks like where the ego might go, but is in fact only temporarily aligned
-    
-        for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
+
+        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
+        for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
             detections = scenario.get_tracked_objects_at_iteration(iteration)
             agents = detections.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE)
@@ -141,12 +174,11 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
                     
             for agent in agents:
                 for connector in agent_connectors[agent.metadata.track_token]:
-                    if ego_connector.baseline_path.linestring.intersects(connector.baseline_path.linestring) and ego_connector.id != connector.id:
+                    agent_line = self.cut_piece(connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
+                    if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
                         return True
         
         return False
-
-
 
 
     def compute(self, history: SimulationHistory, scenario: AbstractScenario) -> List[MetricStatistics]:
