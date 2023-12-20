@@ -101,8 +101,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         elif issubclass(type(closest_segment), Lane):
             distance_to_connector = closest_segment.baseline_path.length - progress
             #if we are moving so slowly, or are so far away that in 5 seconds the agent does not make it to the intersection, we are probably not in danger
-            print('hi there')
-            if  distance_to_connector / agent.velocity.magnitude() > 5:
+            if  distance_to_connector > 5 * agent.velocity.magnitude():
                 return {}
             connectors = closest_segment.outgoing_edges
         connectors = set(connectors)
@@ -115,7 +114,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         
         return connectors
     
-    def get_traffic_light_status_at_iteration(self, iteration: int, scenario: AbstractScenario):
+    def get_traffic_light_status_at_iteration(self, iteration: int, scenario: AbstractScenario) -> Dict[TrafficLightStatusType, List[str]]:
         """_summary_
 
         :param iteration: _description_
@@ -129,7 +128,17 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         for data in traffic_light_data:
             traffic_light_status[data.status].append(str(data.lane_connector_id))
         return traffic_light_status
-
+    
+    def is_connector_mostly_not_red_over_scenario(self, connector: LaneConnector, traffic_light_status_dict, history: SimulationHistory, step_size: int, threshold: int = 0.1) -> bool:
+        d, n = 0, 0
+        for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
+            d += 1
+            if connector.has_traffic_lights() and connector.id in traffic_light_status_dict[iteration][TrafficLightStatusType.RED]:
+                n += 1
+        if n / d > threshold:
+            return False
+        return True
+            
     def can_scenario_be_made_dangerous(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
         """Checks if the scenario can be made dangerous for the ego vehicle (if there are active intersections with vehicles in them)
         :param history: _description_
@@ -140,16 +149,16 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         
         list_of_ego_states = history.extract_ego_state
         
-        step_size = 1 #in seconds
+        step_size = 1 # in seconds
         temp_connectors = []
-        traffic_light_status_list = {}
+        traffic_light_status_dict = {}
         print(history.__len__(), int(step_size / history.interval_seconds), history.interval_seconds)
         for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
-            #here, we get the traffic light status at the current iteration
-            traffic_light_status_list[iteration] = self.get_traffic_light_status_at_iteration(iteration, scenario)
+            # here, we get the traffic light status at the current iteration
+            traffic_light_status_dict[iteration] = self.get_traffic_light_status_at_iteration(iteration, scenario)
             
-            ego_state = list_of_ego_states[iteration].agent #get agent from ego state
-            ego_connectors = self.get_non_red_connectors(traffic_light_status_list[iteration], map_api, ego_state)
+            ego_state = list_of_ego_states[iteration].agent # get agent from ego state
+            ego_connectors = self.get_non_red_connectors(traffic_light_status_dict[iteration], map_api, ego_state)
             if len(ego_connectors) == 1:
                 temp_connectors.extend(ego_connectors)
         
@@ -158,6 +167,9 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         
         ego_connector = max(temp_connectors, key=Counter(temp_connectors).get) # we grab the most common connector. this is to stop us from accedentally selecting a connector that looks like where the ego might go, but is in fact only temporarily aligned
 
+        if not self.is_connector_mostly_not_red_over_scenario(ego_connector, traffic_light_status_dict, history, step_size):
+            return False
+        
         ego_line = self.cut_piece(ego_connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
         for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
@@ -166,17 +178,18 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             ego_state = list_of_ego_states[iteration].agent #get agent from ego state at given iteration
 
             for agent in agents:
-                ## agents should be close enough to ego to matter but far enough to be able to put someone in between: >50m, <10m
-                if agent.center.distance_to(ego_state.center) > 50 or agent.center.distance_to(ego_state.center) < 10:
+                ## agents should be close enough to ego to matter but far enough to be able to put someone in between: >50m, <5m
+                if agent.center.distance_to(ego_state.center) > 80 or agent.center.distance_to(ego_state.center) < 5:
                     agent_connectors[agent.metadata.track_token] = {}
                 else:
-                    agent_connectors[agent.metadata.track_token] = self.get_non_red_connectors(traffic_light_status_list[iteration], map_api, agent)
+                    agent_connectors[agent.metadata.track_token] = self.get_non_red_connectors(traffic_light_status_dict[iteration], map_api, agent)
                     
             for agent in agents:
                 for connector in agent_connectors[agent.metadata.track_token]:
-                    agent_line = self.cut_piece(connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
-                    if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
-                        return True
+                    if self.is_connector_mostly_not_red_over_scenario(connector, traffic_light_status_dict, history, step_size): # we only bother checking the connector if is mostly not red
+                        agent_line = self.cut_piece(connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
+                        if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
+                            return True
         
         return False
 
