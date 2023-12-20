@@ -129,13 +129,15 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             traffic_light_status[data.status].append(str(data.lane_connector_id))
         return traffic_light_status
     
-    def is_connector_mostly_not_red_over_scenario(self, connector: LaneConnector, traffic_light_status_dict, history: SimulationHistory, step_size: int, threshold: int = 0.1) -> bool:
+    def is_connector_mostly_not_red_over_scenario(self, connector: LaneConnector, traffic_light_status_dict, history: SimulationHistory, step_size: int, threshold: float = 0.1) -> bool:
         d, n = 0, 0
         for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
             d += 1
             if connector.has_traffic_lights() and connector.id in traffic_light_status_dict[iteration][TrafficLightStatusType.RED]:
                 n += 1
+            
         if n / d > threshold:
+            #print('hi there', n, d, n / d)
             return False
         return True
             
@@ -152,7 +154,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         step_size = 1 # in seconds
         temp_connectors = []
         traffic_light_status_dict = {}
-        print(history.__len__(), int(step_size / history.interval_seconds), history.interval_seconds)
+        #print(history.__len__(), int(step_size / history.interval_seconds), history.interval_seconds)
         for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
             # here, we get the traffic light status at the current iteration
             traffic_light_status_dict[iteration] = self.get_traffic_light_status_at_iteration(iteration, scenario)
@@ -170,7 +172,9 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         if not self.is_connector_mostly_not_red_over_scenario(ego_connector, traffic_light_status_dict, history, step_size):
             return False
         
-        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
+        upper_cut = 0.95
+        lower_cut = 0.05
+        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, lower_cut, upper_cut)# cuts off first and last 5% of the line
         for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
             detections = scenario.get_tracked_objects_at_iteration(iteration)
@@ -187,7 +191,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             for agent in agents:
                 for connector in agent_connectors[agent.metadata.track_token]:
                     if self.is_connector_mostly_not_red_over_scenario(connector, traffic_light_status_dict, history, step_size): # we only bother checking the connector if is mostly not red
-                        agent_line = self.cut_piece(connector.baseline_path.linestring, 0.05, 0.95)# cuts off first and last 5% of the line
+                        agent_line = self.cut_piece(connector.baseline_path.linestring, lower_cut, upper_cut)# cuts off first and last 5% of the line
                         if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
                             return True
         

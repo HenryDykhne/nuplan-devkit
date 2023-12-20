@@ -220,7 +220,7 @@ class IDMAgent:
             if not selected_outgoing_edges:
                 break
             # Select edge with the lowest curvature (prefer going straight)
-            curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in selected_outgoing_edges]
+            curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in selected_outgoing_edges]## if we select highest or lowest curviture, we can choose left or right turns
             idx = np.argmin(curvatures)
             new_segment = selected_outgoing_edges[idx]
 
