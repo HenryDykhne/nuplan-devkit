@@ -135,6 +135,8 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             d += 1
             if connector.has_traffic_lights() and connector.id in traffic_light_status_dict[iteration][TrafficLightStatusType.RED]:
                 n += 1
+            elif connector.has_traffic_lights() and connector.id in traffic_light_status_dict[iteration][TrafficLightStatusType.GREEN]:
+                return True #if the light is explicitly green at any point, we can assume it is not red for the relavant portion of the scenario
             
         if n / d > threshold:
             #print('hi there', n, d, n / d)
