@@ -86,19 +86,21 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         :param agent: agent to get the non red connectors for
         :return: set of lane connectors that are not red
         """
+        DISTANCE_INTO_INTERSECTION = 5 # meters
+        TIME_TO_INTERSECTION = 5 # seconds
         closest_segment, progress = get_starting_segment(agent, map_api)
         # Ignore agents for which a closest_segment cannot be found
         if closest_segment is None:
             return {}
 
         if issubclass(type(closest_segment), LaneConnector):
-            if progress > 5:
+            if progress > DISTANCE_INTO_INTERSECTION:
                 return {} # if we have made it more than 5 meters into the intersection, other agents can likely see us now and we are either already in danger, or not in danger, but we will never be in a position to make the scenario dangerous
             connectors = [closest_segment]
         elif issubclass(type(closest_segment), Lane):
             distance_to_connector = closest_segment.baseline_path.length - progress
             #if we are moving so slowly, or are so far away that in 5 seconds the agent does not make it to the intersection, we are probably not in danger
-            if  distance_to_connector > 5 * agent.velocity.magnitude():
+            if  distance_to_connector > TIME_TO_INTERSECTION * agent.velocity.magnitude():
                 return {}
             connectors = closest_segment.outgoing_edges
         connectors = set(connectors)
@@ -168,9 +170,11 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         if not self.is_connector_mostly_not_red_over_scenario(ego_connector, traffic_light_status_dict, history, step_size):
             return False
         
-        upper_cut = 0.95
-        lower_cut = 0.05
-        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, lower_cut, upper_cut)# cuts off first and last 5% of the line
+        UPPER_CUT = 0.95
+        LOWER_CUT = 0.05
+        MIN_DISTANCE = 5 # meters
+        MAX_DISTANCE = 80 # meters
+        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first and last 5% of the line
         for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
             detections = scenario.get_tracked_objects_at_iteration(iteration)
@@ -179,7 +183,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
 
             for agent in agents:
                 ## agents should be close enough to ego to matter but far enough to be able to put someone in between: >50m, <5m
-                if agent.center.distance_to(ego_state.center) > 80 or agent.center.distance_to(ego_state.center) < 5:
+                if agent.center.distance_to(ego_state.center) > MAX_DISTANCE or agent.center.distance_to(ego_state.center) < MIN_DISTANCE:
                     agent_connectors[agent.metadata.track_token] = {}
                 else:
                     agent_connectors[agent.metadata.track_token] = self.get_non_red_connectors(traffic_light_status_dict[iteration], map_api, agent)
@@ -187,7 +191,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             for agent in agents:
                 for connector in agent_connectors[agent.metadata.track_token]:
                     if self.is_connector_mostly_not_red_over_scenario(connector, traffic_light_status_dict, history, step_size): # we only bother checking the connector if is mostly not red
-                        agent_line = self.cut_piece(connector.baseline_path.linestring, lower_cut, upper_cut)# cuts off first and last 5% of the line
+                        agent_line = self.cut_piece(connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first and last 5% of the line
                         if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
                             return True
         
