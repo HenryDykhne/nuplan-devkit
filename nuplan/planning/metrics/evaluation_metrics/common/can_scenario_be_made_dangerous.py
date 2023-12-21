@@ -1,9 +1,5 @@
 from collections import defaultdict, Counter
-from typing import Dict, List, Optional, Type
-from nuplan.common.actor_state.ego_state import EgoState
-from nuplan.planning.simulation.observation.observation_type import Observation
-
-import numpy as np
+from typing import Dict, List, Optional
 
 from nuplan.planning.metrics.evaluation_metrics.base.metric_base import MetricBase
 from nuplan.planning.metrics.metric_result import MetricStatistics, MetricStatisticsType, Statistic, TimeSeries
@@ -11,18 +7,12 @@ from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.history.simulation_history import SimulationHistory
 from nuplan.planning.simulation.observation.idm.idm_agents_builder import get_starting_segment
 from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_OBJECT_TYPES, TrackedObjectType
-from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject, LaneConnector, Lane
+from nuplan.common.maps.abstract_map_objects import LaneConnector, Lane
 from nuplan.common.maps.maps_datatypes import TrafficLightStatusType
-
 from nuplan.common.actor_state.agent import Agent
-
 
 from shapely.geometry import Point, LineString, MultiLineString
 from shapely.ops import linemerge
-
-import time
-
-
 
 class CanScenarioBeMadeDangerousStatistics(MetricBase):
     """
@@ -52,7 +42,12 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         """Inherited, see superclass."""
         return float(metric_statistics[0].value)
     
-    def cut(self, line: LineString, distance: float):
+    def cut(self, line: LineString, distance: float) -> List[LineString]:
+        """ Cuts a line at a distance from its starting point
+        :param line: LineString to cut
+        :param distance: distance from the start of the line to cut
+        :return: tuple of LineStrings
+        """
         if distance <= 0.0 :#line.length:
             return [None, LineString(line)]
         elif distance >= 1.0:
@@ -71,8 +66,11 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
                     LineString([(cp.x, cp.y)] + coords[i:])]
 
     def cut_piece(self, line: LineString, distance1: float, distance2: float):
-        """ From a linestring, this cuts a piece of length lgth at distance.
-        Needs cut(line,distance) func from above ;-)
+        """Cuts a piece out of a line
+        :param line: LineString to cut
+        :param distance1: percentage of line to cut from the start
+        :param distance2: percentage of line to cut from the end
+        :return: LineString of the middle cut piece
         """
         l1 = self.cut(line, distance1)[1]
         l2 = self.cut(line, distance2)[0]
@@ -82,11 +80,10 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         return linemerge(result)
     
     def get_non_red_connectors(self, traffic_light_status, map_api, agent: Agent) -> set:
-        """_summary_
-
-        :param traffic_light_status: _description_
-        :param map_api: _description_
-        :param agent: _description_
+        """ Returns the set of lane connectors that are not red that an agent is in or about to be in
+        :param traffic_light_status: dictionary of traffic light status to list of lane connector ids
+        :param map_api: map api to get the closest segment from
+        :param agent: agent to get the non red connectors for
         :return: set of lane connectors that are not red
         """
         closest_segment, progress = get_starting_segment(agent, map_api)
@@ -115,11 +112,10 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         return connectors
     
     def get_traffic_light_status_at_iteration(self, iteration: int, scenario: AbstractScenario) -> Dict[TrafficLightStatusType, List[str]]:
-        """_summary_
-
-        :param iteration: _description_
-        :param scenario: _description_
-        :return: _description_
+        """Returns the traffic light status at the scene at the given iteration
+        :param iteration: iteration to get the traffic light status at
+        :param scenario: scenario to get the traffic light status at
+        :return: dictionary of traffic light status to list of lane connector ids
         """
         traffic_light_data = scenario.get_traffic_light_status_at_iteration(iteration) #perhaps we should check once a second for the first half of the time?
         # Extract traffic light data into Dict[traffic_light_status, lane_connector_ids]
@@ -139,15 +135,14 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
                 return True #if the light is explicitly green at any point, we can assume it is not red for the relavant portion of the scenario
             
         if n / d > threshold:
-            #print('hi there', n, d, n / d)
             return False
         return True
             
     def can_scenario_be_made_dangerous(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
         """Checks if the scenario can be made dangerous for the ego vehicle (if there are active intersections with vehicles in them)
-        :param history: _description_
-        :param scenario: _description_
-        :return: _description_
+        :param history: Full scenario history
+        :param scenario: Full scenario object
+        :return: Returns if the scenario can be made dangerous
         """
         map_api = scenario.map_api
         
@@ -156,7 +151,6 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         step_size = 1 # in seconds
         temp_connectors = []
         traffic_light_status_dict = {}
-        #print(history.__len__(), int(step_size / history.interval_seconds), history.interval_seconds)
         for iteration in range(0, history.__len__(), int(step_size / history.interval_seconds)):
             # here, we get the traffic light status at the current iteration
             traffic_light_status_dict[iteration] = self.get_traffic_light_status_at_iteration(iteration, scenario)
