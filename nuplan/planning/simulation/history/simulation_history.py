@@ -41,7 +41,7 @@ class SimulationHistory:
         """
         self.map_api: AbstractMap = map_api
         self.mission_goal = mission_goal
-        # NOTE: This is just for visualization code, not used during simulation
+        # NOTE: This is used for visualization and for the is_relavant_agent_occluded metric
         self.occlusion_masks = None
 
         self.data: List[SimulationHistorySample] = data if data is not None else list()
@@ -80,6 +80,14 @@ class SimulationHistory:
         :return An List of ego_states.
         """
         return [sample.ego_state for sample in self.data]
+    
+    @property
+    def extract_observations(self) -> List[EgoState]:
+        """
+        Extract observations in simulation history.
+        :return An List of observations.
+        """
+        return [sample.observation for sample in self.data]
 
     @property
     def interval_seconds(self) -> float:

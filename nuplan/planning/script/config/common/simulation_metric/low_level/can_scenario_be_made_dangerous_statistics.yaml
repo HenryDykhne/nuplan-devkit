@@ -1,0 +1,5 @@
+can_scenario_be_made_dangerous_statistics:
+  _target_: nuplan.planning.metrics.evaluation_metrics.common.can_scenario_be_made_dangerous.CanScenarioBeMadeDangerousStatistics
+  _convert_: 'all'
+  name: 'can_scenario_be_made_dangerous'
+  category: 'Occlusions'

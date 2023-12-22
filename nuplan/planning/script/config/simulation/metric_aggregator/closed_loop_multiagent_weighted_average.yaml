@@ -4,6 +4,7 @@ closed_loop_reactive_agents_weighted_average:
   metric_weights:  # Below we list the metrics used in the scenario scoring function and their corresponsing weights to calculate a weighted average score for each scenario,
   # if not specified, the weight is set as default.
     # metric name : metric weight in the weighted average function
+    is_relavant_agent_occluded: 0.0 # this metric is only for our occlusion stuff so it should not affect the other weights
     ego_progress_along_expert_route: 5.0 # This metric has the highest weight equal to 5.0 in the weighted average function, its base score can take a value in [0,1] depending on the ratio of ego to expert progress
     time_to_collision_within_bound: 5.0 # This metric has the highest weight equal to 5.0 in the weighted average function, its base score can be 0 or 1 depending on the minimum time to collision threshold
     speed_limit_compliance: 4.0 # This metric has a weight equal to 4.0 in the weighted average function, its base score can take a value in [0,1] depending on the amount and duration of over-speeding
