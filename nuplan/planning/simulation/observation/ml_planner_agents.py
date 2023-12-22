@@ -17,21 +17,66 @@ from nuplan.planning.simulation.observation.observation_type import Observation
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
+from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
+
 from nuplan.planning.simulation.planner.ml_planner.ml_planner import MLPlanner
 from nuplan.planning.simulation.simulation_time_controller.simulation_iteration import SimulationIteration
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 
+from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
+
+from tuplan_garage.planning.training.modeling.models.pdm_offset_model import PDMOffsetModel
+from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_closed_planner import PDMClosedPlanner
+from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_hybrid_planner import PDMHybridPlanner
+
+from tuplan_garage.planning.simulation.planner.pdm_planner.proposal.batch_idm_policy import BatchIDMPolicy
 
 OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, \
                              TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, \
                              TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
+
+IDM_AGENT_CONFIG = {  
+    "target_velocity": 10,             # Desired velocity in free traffic [m/s]
+    "min_gap_to_lead_agent": 1.0,      # Minimum relative distance to lead vehicle [m]
+    "headway_time": 1.5,               # Desired time headway. The minimum possible time to the vehicle in front [s]
+    "accel_max": 1.0,                  # Maximum acceleration [m/s^2]
+    "decel_max": 3.0,                  # Maximum deceleration (positive value) [m/s^2]
+    "planned_trajectory_samples": 16,  # Number of trajectory samples to generate
+    "planned_trajectory_sample_interval": 0.5,  # The sampling time interval between samples [s]
+    "occupancy_map_radius": 40,        # The range around the ego to add objects to be considered [m]
+}
+
+
+PDM_CLOSED_AGENT_CONFIG = {  
+    "trajectory_sampling": TrajectorySampling(num_poses=80, interval_length= 0.1),
+    "proposal_sampling": TrajectorySampling(num_poses=40, interval_length= 0.1),
+    "idm_policies": BatchIDMPolicy(speed_limit_fraction= [0.2,0.4,0.6,0.8,1.0], 
+                                    fallback_target_velocity= 15.0, 
+                                    min_gap_to_lead_agent= 1.0,
+                                    headway_time= 1.5,
+                                    accel_max= 1.5,
+                                    decel_max= 3.0),
+    "lateral_offsets": [-1.0, 1.0], 
+    "map_radius": 50,
+}
+
+PDM_HYBRID_AGENT_CONFIG = {  
+    "model":PDMOffsetModel(trajectory_sampling=TrajectorySampling(num_poses=16, interval_length=0.5), 
+                        history_sampling=TrajectorySampling(num_poses=10, interval_length=0.2),
+                        planner=None,
+                        centerline_samples=120,
+                        centerline_interval=1.0,
+                        hidden_dim=512),
+    "correction_horizon":2.0,
+}
+
 
 class MLPlannerAgents(AbstractObservation):
     """
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool) -> None:
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, pdm_hybrid_ckpt: str) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
@@ -39,6 +84,8 @@ class MLPlannerAgents(AbstractObservation):
         """
         self.current_iteration = 0
         self.model = model
+        self.planner_type = planner_type
+        self.pdm_hybrid_ckpt = pdm_hybrid_ckpt
         self._scenario = scenario
         self._occlusions = occlusions
         self._ego_state_history: Dict = {}
@@ -274,9 +321,22 @@ class MLPlannerAgents(AbstractObservation):
         self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
     def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
+
+        if self.planner_type == "ml":
+            planner = MLPlanner(self.model)
+        elif self.planner_type == "idm":
+            planner = IDMPlanner(**IDM_AGENT_CONFIG)
+        elif self.planner_type == "pdm_closed":
+            planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG)
+        elif self.planner_type == "pdm_hybrid":
+            assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
+            planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, **PDM_HYBRID_AGENT_CONFIG, checkpoint_path=self.pdm_hybrid_ckpt)
+        else:
+            raise ValueError("Invalid planner type.")
+
         return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                 'metadata': agent.metadata,
-                'planner': MLPlanner(self.model),
+                'planner': planner,
                 'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):

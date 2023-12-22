@@ -4,3 +4,5 @@ _convert_: 'all'
 model_config: ???  # Dictionary key from existing planner model config (e.g. reactive_agents_model)
 checkpoint_path: ???  # Path to trained model checkpoint
 occlusions: false  # Boolean to determine whether occlusions should be enabled
+planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm_closed", "pdm_hybrid")
+pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
