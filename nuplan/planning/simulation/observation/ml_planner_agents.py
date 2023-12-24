@@ -361,7 +361,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return None
     
-    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
+    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 5):
 
         start_edge, _ = self._get_target_segment(agent.center, self._scenario.map_api)
         end_edge, _ = self._get_target_segment(goal, self._scenario.map_api)
@@ -384,7 +384,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
     
-    def _extend_path(self, route_plan: List[str], min_path_length: 10):
+    def _extend_path(self, route_plan: List[str], min_path_length: 5):
         """
         Extends a route plan to a given depth by continually going forward.
         """
