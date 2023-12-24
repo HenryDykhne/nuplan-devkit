@@ -221,7 +221,7 @@ class MLPlannerAgents(AbstractObservation):
         # Most of this is just eyeballed, so there may be a more principled way of setting these values.
         output = EgoState.build_from_center(
             center=agent.center,
-            center_velocity_2d=agent.velocity,
+            center_velocity_2d=agent.velocity if self.planner_type != "idm" else StateVector2D(agent.velocity.magnitude(), 0),
             center_acceleration_2d=StateVector2D(0, 0),
             tire_steering_angle=0,
             time_point=time_point,
@@ -361,7 +361,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return None
     
-    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 5):
+    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
 
         start_edge, _ = self._get_target_segment(agent.center, self._scenario.map_api)
         end_edge, _ = self._get_target_segment(goal, self._scenario.map_api)
@@ -384,7 +384,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
     
-    def _extend_path(self, route_plan: List[str], min_path_length: 5):
+    def _extend_path(self, route_plan: List[str], min_path_length: 10):
         """
         Extends a route plan to a given depth by continually going forward.
         """
