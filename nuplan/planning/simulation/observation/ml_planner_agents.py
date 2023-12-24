@@ -1,6 +1,8 @@
 from collections import deque
 from copy import deepcopy
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Tuple, Type
+
+import numpy as np
 
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.ego_state import EgoState
@@ -9,6 +11,8 @@ from nuplan.common.actor_state.state_representation import StateSE2, StateVector
 from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
+from nuplan.common.maps.abstract_map import AbstractMap
+from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject, RoadBlockGraphEdgeMapObject
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
@@ -30,6 +34,8 @@ from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_closed_planner im
 from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_hybrid_planner import PDMHybridPlanner
 
 from tuplan_garage.planning.simulation.planner.pdm_planner.proposal.batch_idm_policy import BatchIDMPolicy
+
+from nuplan.common.maps.maps_datatypes import SemanticMapLayer
 
 OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, \
                              TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, \
@@ -93,7 +99,6 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache: Dict = {}
         self._inference_frequency: float = 0.2
         self._full_inference_distance: float = 30
-        self._agent_presence_threshold: float = 10
 
     def reset(self) -> None:
         """Inherited, see superclass."""
@@ -121,19 +126,21 @@ class MLPlannerAgents(AbstractObservation):
                 # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
                 # if the agent disappears early in a scene.
                 goal = self._get_historical_agent_goal(agent, self.current_iteration)
-                #print(goal)
                 if goal:
-                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
 
-                    # Initialize planner.
-                    planner_init = PlannerInitialization(
-                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+                    route_plan = self._get_roadblock_path(agent, goal)
+
+                    if route_plan:
+                        self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
+
+                        # Initialize planner.
+                        planner_init = PlannerInitialization(
+                            route_roadblock_ids=route_plan,
                             mission_goal=goal,
                             map_api=self._scenario.map_api,
                         )
-                    
-                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+                        self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
         return self._agents
 
@@ -312,13 +319,19 @@ class MLPlannerAgents(AbstractObservation):
 
         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
 
-        planner_init = PlannerInitialization(
-                route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+        route_plan = self._get_roadblock_path(agent, goal)
+
+        if route_plan:
+            self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
+
+            # Initialize planner.
+            planner_init = PlannerInitialization(
+                route_roadblock_ids=route_plan,
                 mission_goal=goal,
                 map_api=self._scenario.map_api,
             )
-        
-        self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+            self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
     def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
 
@@ -340,7 +353,7 @@ class MLPlannerAgents(AbstractObservation):
                 'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
-        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index+self._agent_presence_threshold, -1):
+        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index, -1):
             last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
             for track in last_scenario_frame.tracked_objects.tracked_objects:
                 if track.metadata.track_token == agent.metadata.track_token:
@@ -348,20 +361,162 @@ class MLPlannerAgents(AbstractObservation):
 
         return None
     
-    def _add_newly_detected_agents(self, next_iteration: SimulationIteration):
-        for agent in self._scenario.get_tracked_objects_at_iteration(next_iteration.index).tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
-            if agent.metadata.track_token not in self._agents:
-                goal = self._get_historical_agent_goal(agent, next_iteration.index)
+    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
 
-                if goal:
-                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, next_iteration.time_point)
+        start_edge, _ = self._get_target_segment(agent.center, self._scenario.map_api)
+        end_edge, _ = self._get_target_segment(goal, self._scenario.map_api)
 
-                    # Initialize planner.
-                    planner_init = PlannerInitialization(
-                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
-                            mission_goal=goal,
-                            map_api=self._scenario.map_api,
-                        )
-                    
-                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+        if start_edge is None:
+            return None
+        
+        if end_edge is not None:
+            gs = BreadthFirstSearch(start_edge)
+            route_plan, path_found = gs.search(end_edge, max_depth)
+        else:
+            route_plan = [start_edge]
+
+        route_plan = self._extend_path(route_plan, max_depth)        
+        route_plan = [edge.get_roadblock_id() for edge in route_plan]
+        route_plan = list(dict.fromkeys(route_plan))
+        
+        if len(route_plan) == 1:
+            route_plan = route_plan + route_plan
+
+        return route_plan
+    
+    def _extend_path(self, route_plan: List[str], min_path_length: 10):
+        """
+        Extends a route plan to a given depth by continually going forward.
+        """
+        while len(route_plan) < min_path_length:
+            outgoing_edges = route_plan[-1].outgoing_edges
+
+            if not outgoing_edges:
+                break
+
+            curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in outgoing_edges]
+            idx = np.argmin(curvatures)
+            route_plan.append(outgoing_edges[idx])
+
+        return route_plan
+
+    def _get_target_segment(
+        self, target_state: StateSE2, map_api: AbstractMap
+    ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
+        """
+        Gets the map object that the agent is on and the progress along the segment.
+        :param agent: The agent of interested.
+        :param map_api: An AbstractMap instance.
+        :return: GraphEdgeMapObject and progress along the segment. If no map object is found then None.
+        """
+        if map_api.is_in_layer(target_state, SemanticMapLayer.LANE):
+            layer = SemanticMapLayer.LANE
+        elif map_api.is_in_layer(target_state, SemanticMapLayer.INTERSECTION):
+            layer = SemanticMapLayer.LANE_CONNECTOR
+        else:
+            return None, None
+
+        segments: List[LaneGraphEdgeMapObject] = map_api.get_all_map_objects(target_state, layer)
+        if not segments:
+            return None, None
+
+        # Get segment with the closest heading to the agent
+        heading_diff = [
+            segment.baseline_path.get_nearest_pose_from_position(target_state).heading - target_state.heading
+            for segment in segments
+        ]
+        closest_segment = segments[np.argmin(np.abs(heading_diff))]
+
+        progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
+        return closest_segment, progress
+
+
+class BreadthFirstSearch:
+ 
+
+    def __init__(self, start_edge: LaneGraphEdgeMapObject):
+
+        self._queue = deque([start_edge, None])
+        self._parent: Dict[str, Optional[LaneGraphEdgeMapObject]] = dict()
+        self._visited = set()
+
+    def search(
+        self, target_edge: LaneGraphEdgeMapObject, max_depth: int
+    ) -> Tuple[List[LaneGraphEdgeMapObject], bool]:
+
+        start_edge = self._queue[0]
+
+        # Initial search states
+        path_found: bool = False
+        end_edge: LaneGraphEdgeMapObject = start_edge
+        end_depth: int = 1
+        depth: int = 1
+
+        self._parent[start_edge.id + f"_{depth}"] = None
+
+        while self._queue:
+            current_edge = self._queue.popleft()
+            if current_edge is not None:
+                self._visited.add(current_edge.id)
+
+            # Early exit condition
+            if self._check_end_condition(depth, max_depth):
+                break
+
+            # Depth tracking
+            if current_edge is None:
+                depth += 1
+                self._queue.append(None)
+                if self._queue[0] is None:
+                    break
+                continue
+
+            # Goal condition
+            if self._check_goal_condition(current_edge, target_edge):
+                end_edge = current_edge
+                end_depth = depth
+                path_found = True
+                break
+
+            # Populate queue
+            for next_edge in current_edge.outgoing_edges:
+                if next_edge.id not in self._visited:
+                    self._queue.append(next_edge)
+                    self._parent[next_edge.id + f"_{depth + 1}"] = current_edge
+                    end_edge = next_edge
+                    end_depth = depth + 1
+
+        return self._construct_path(end_edge, end_depth), path_found
+
+    @staticmethod
+    def _check_end_condition(depth: int, target_depth: int) -> bool:
+        """
+        Check if the search should end regardless if the goal condition is met.
+        :param depth: The current depth to check.
+        :param target_depth: The target depth to check against.
+        :return: True if:
+            - The current depth exceeds the target depth.
+        """
+        return depth > target_depth
+
+    @staticmethod
+    def _check_goal_condition(
+        current_edge: LaneGraphEdgeMapObject,
+        target_edge: LaneGraphEdgeMapObject,
+    ) -> bool:
+        return current_edge.id == target_edge.id
+
+    def _construct_path(self, end_edge: LaneGraphEdgeMapObject, depth: int) -> List[LaneGraphEdgeMapObject]:
+        """
+        :param end_edge: The end edge to start back propagating back to the start edge.
+        :param depth: The depth of the target edge.
+        :return: The constructed path as a list of LaneGraphEdgeMapObject
+        """
+        path = [end_edge]
+        while self._parent[end_edge.id + f"_{depth}"] is not None:
+            path.append(self._parent[end_edge.id + f"_{depth}"])
+            end_edge = self._parent[end_edge.id + f"_{depth}"]
+            depth -= 1
+        path.reverse()
+
+        return path
