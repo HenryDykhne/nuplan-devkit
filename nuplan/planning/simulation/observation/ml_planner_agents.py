@@ -197,7 +197,7 @@ class MLPlannerAgents(AbstractObservation):
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
 
                 if agent_data['occlusion'] is not None:
-                    planner_input = agent_data['occlusion'].occlude_input(history_input)
+                    history_input = agent_data['occlusion'].occlude_input(history_input)
 
                 planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)                    
                 trajectory = agent_data['planner'].compute_trajectory(planner_input)
@@ -292,9 +292,9 @@ class MLPlannerAgents(AbstractObservation):
             # Convert agent state to a corresponding "ego state" object, or pull it from cache if already computed.
             if matched_agent is None:
                 faux_ego_observation = deepcopy(current_state)
-                faux_ego_observation._time_point = ego_state.time_point
+                faux_ego_observation._time_point = deepcopy(ego_state.time_point)
             else:
-                faux_ego_observation = self._build_ego_state_from_agent(matched_agent, ego_state.time_point)
+                faux_ego_observation = self._build_ego_state_from_agent(matched_agent, deepcopy(ego_state.time_point))
 
 
             # Rebuild timestep and buffer - creating a new observations object with old ego appended.
