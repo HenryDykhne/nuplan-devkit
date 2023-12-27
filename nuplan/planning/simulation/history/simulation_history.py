@@ -43,6 +43,7 @@ class SimulationHistory:
         self.mission_goal = mission_goal
         # NOTE: This is used for visualization and for the is_relavant_agent_occluded metric
         self.occlusion_masks = None
+        self.notice_masks = None
 
         self.data: List[SimulationHistorySample] = data if data is not None else list()
 

@@ -171,6 +171,7 @@ class Simulation:
         
         if self._occlusion_manager:
             self._history.occlusion_masks = self._occlusion_manager._visible_agent_cache
+            self._history.notice_masks = self._occlusion_manager._historical_noticed_agent_cache
 
         # Propagate state to next iteration
         next_iteration = self._time_controller.next_iteration()
