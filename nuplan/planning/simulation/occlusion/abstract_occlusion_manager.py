@@ -94,20 +94,18 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         Fills out the latest uncloak window for the _noticed_agent_cache. agents that are noticed at a timestep will always be noticed at that timestep
         """
         self._noticed_agent_cache[ego_state_buffer[-1].time_us] = set()
+        notice_threshold_over_sample_interval = int(self.notice_threshold / sample_interval)
         time_us_at_begining_of_window = ego_state_buffer[0].time_us
+        
+        initial_tokens = self._visible_agent_cache[time_us_at_begining_of_window].union(self._noticed_agent_cache[time_us_at_begining_of_window])
+
         for agent in observations_buffer[0].tracked_objects.tracked_objects:
             token = agent.metadata.track_token
-            if (token in self._visible_agent_cache[time_us_at_begining_of_window]) or (token in self._noticed_agent_cache[time_us_at_begining_of_window]): #if we are visible or noticed at the begining of the window, we should check if we are noticed at later timesteps
-                vis_count = 0
-                for ego_state in ego_state_buffer: #now we loop forward to the present time to check how much we are visible. if we are visible for more than the notice_threshold, then we are "noticed"
-                    if token in self._visible_agent_cache[ego_state.time_us]:
-                        vis_count += 1
-
-                if vis_count * sample_interval >= self.notice_threshold:
-                    for ego_state in ego_state_buffer: #now we loop forward to the present time to check how much we are visible. if we are visible for more than the notice_threshold, then we are "noticed"
+            if token in initial_tokens:
+                vis_count = sum(token in self._visible_agent_cache[ego_state.time_us] for ego_state in ego_state_buffer)
+                if vis_count >= notice_threshold_over_sample_interval:
+                    for ego_state in ego_state_buffer:
                         self._noticed_agent_cache[ego_state.time_us].add(token)
-            else:
-                continue
     ####################################################################################################################################   
 
     def _mask_input(self, time_us: int, observations: DetectionsTracks) -> DetectionsTracks:
