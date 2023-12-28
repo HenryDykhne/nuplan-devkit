@@ -51,21 +51,17 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         ego_state_buffer = input_buffer.ego_state_buffer
         observations_buffer = input_buffer.observation_buffer
         sample_interval = input_buffer.sample_interval
-        # start = time.time()
+
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
             if ego_state.time_us not in self._visible_agent_cache:
                 self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
-    #     timeV = time.time() - start
-    #     print('V',timeV)
-    # ######################################################################################################################### changes
-    #     start = time.time()
+
         current_time_seconds = ego_state_buffer[-1].time_seconds
         assert len(ego_state_buffer) * input_buffer.sample_interval >= self.uncloak_reaction_time, "SimulationHistoryBuffer must be at least as long as uncloak reaction time."
         for i, (ego_state, observations) in enumerate(zip(ego_state_buffer, observations_buffer)):#we loop through to find the first timestep inside the uncloak_reaction_time
             if ego_state.time_us not in self._noticed_agent_cache: #we only enter here at the begining of the simulation to determine the noticed cache of the history
                 for j, ego_state_c in enumerate(ego_state_buffer): #this for loop only exists to find the right index
                     if ego_state.time_seconds - ego_state_c.time_seconds <= self.uncloak_reaction_time: #this will eventually be true
-                        #print('hi!!!!!!!!!!!!!!!!!!!!!!!!!!!')
                         self._compute_noticed_agents(input_buffer.sample_interval, 
                                                     deque(itertools.islice(ego_state_buffer, j, i + 1)), 
                                                     deque(itertools.islice(observations_buffer, j, i + 1))) #this is only run once per state not in the noticed_agents_cache
@@ -76,10 +72,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                                             deque(itertools.islice(ego_state_buffer, i, None)), 
                                             deque(itertools.islice(observations_buffer, i, None))) #this only gets run once since it breaks out of the loop immedietly afterwards
                 break
-    ####################################################################################################################################   
-        # timeN = time.time() - start
-        # print('N', timeN)
-        # print('N/V', timeN/timeV)
+
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
                             deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
                                 sample_interval)
