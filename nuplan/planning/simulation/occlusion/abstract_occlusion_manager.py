@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 from collections import deque
+import time
 from typing import Deque
 import copy
 
@@ -21,7 +22,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         self,
         scenario: AbstractScenario,
         uncloak_reaction_time: float = 1.5, #seconds. I probably want this set to 1.5 for other agents and 0.0 - 0.5 for ego 
-        notice_threshold: float = 0.1 # seconds 
+        notice_threshold: float = 1.0 # seconds 
     ):
         assert uncloak_reaction_time >= 0.0, f"Uncloak reaction time ({uncloak_reaction_time}) must be non-negative."
         assert notice_threshold >= 0.0, f"Notice threshold ({notice_threshold}) must be non-negative."
@@ -50,12 +51,16 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         ego_state_buffer = input_buffer.ego_state_buffer
         observations_buffer = input_buffer.observation_buffer
         sample_interval = input_buffer.sample_interval
-
+        # start = time.time()
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
             if ego_state.time_us not in self._visible_agent_cache:
                 self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
-    ######################################################################################################################### changes
+    #     timeV = time.time() - start
+    #     print('V',timeV)
+    # ######################################################################################################################### changes
+    #     start = time.time()
         current_time_seconds = ego_state_buffer[-1].time_seconds
+        assert len(ego_state_buffer) * input_buffer.sample_interval >= self.uncloak_reaction_time, "SimulationHistoryBuffer must be at least as long as uncloak reaction time."
         for i, (ego_state, observations) in enumerate(zip(ego_state_buffer, observations_buffer)):#we loop through to find the first timestep inside the uncloak_reaction_time
             if ego_state.time_us not in self._noticed_agent_cache: #we only enter here at the begining of the simulation to determine the noticed cache of the history
                 for j, ego_state_c in enumerate(ego_state_buffer): #this for loop only exists to find the right index
@@ -72,7 +77,9 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                                             deque(itertools.islice(observations_buffer, i, None))) #this only gets run once since it breaks out of the loop immedietly afterwards
                 break
     ####################################################################################################################################   
-
+        # timeN = time.time() - start
+        # print('N', timeN)
+        # print('N/V', timeN/timeV)
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
                             deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
                                 sample_interval)
