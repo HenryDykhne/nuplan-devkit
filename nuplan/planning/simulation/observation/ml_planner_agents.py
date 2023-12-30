@@ -21,6 +21,7 @@ from nuplan.planning.simulation.controller.tracker.abstract_tracker import Abstr
 from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
+from nuplan.planning.simulation.observation.ml_planner_agents.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
 from nuplan.planning.simulation.observation.observation_type import Observation
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
@@ -96,7 +97,8 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, \
+                 pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
@@ -133,14 +135,7 @@ class MLPlannerAgents(AbstractObservation):
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
-                
-                # TODO: Support ego controllers - right now just doing perfect tracking.
-                #       Revist whether there is a better way of translating agent states to ego states. 
-                #       Revist whether there is a better way of setting agent goals.
-                #       Filter out impossible/off-road initial detections.
-
-                # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
-                # if the agent disappears early in a scene.
+                # Sets agent goal to be it's last known point in the simulation. 
                 goal = self._get_historical_agent_goal(agent, self.current_iteration)
                 if goal:
 
@@ -202,7 +197,6 @@ class MLPlannerAgents(AbstractObservation):
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         # TODO: Find way to parallelize.
-        # TODO: Propagate non-ego and lower frequency to improve performance.
         for agent_token, agent_data in self._agents.items():
             if agent_token in self._trajectory_cache and \
                 (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._inference_frequency and \
@@ -346,7 +340,6 @@ class MLPlannerAgents(AbstractObservation):
         """
         Adds agent to the scene with a given goal during the simulation runtime.
         """
-        # TODO: Inject IDM agents (and non-ML agents more broadly)
 
         route_plan = self._get_roadblock_path(agent, goal)
 
@@ -393,14 +386,14 @@ class MLPlannerAgents(AbstractObservation):
     
     def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
 
-        start_edge, _ = self._get_target_segment(agent.center, self._scenario.map_api)
-        end_edge, _ = self._get_target_segment(goal, self._scenario.map_api)
+        start_edge, _ = self._get_target_state_segment(agent.center, self._scenario.map_api)
+        end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
 
         if start_edge is None:
             return None
         
         if end_edge is not None:
-            gs = BreadthFirstSearch(start_edge)
+            gs = MaxDepthBreadthFirstSearch(start_edge)
             route_plan, path_found = gs.search(end_edge, max_depth)
         else:
             route_plan = [start_edge]
@@ -430,12 +423,12 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
 
-    def _get_target_segment(
+    def _get_target_state_segment(
         self, target_state: StateSE2, map_api: AbstractMap
     ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
         """
-        Gets the map object that the agent is on and the progress along the segment.
-        :param agent: The agent of interested.
+        Gets the map object that the target state is on and the progress along the segment.
+        :param target_state: The target_state of interest.
         :param map_api: An AbstractMap instance.
         :return: GraphEdgeMapObject and progress along the segment. If no map object is found then None.
         """
@@ -459,94 +452,3 @@ class MLPlannerAgents(AbstractObservation):
 
         progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
         return closest_segment, progress
-
-
-class BreadthFirstSearch:
- 
-
-    def __init__(self, start_edge: LaneGraphEdgeMapObject):
-
-        self._queue = deque([start_edge, None])
-        self._parent: Dict[str, Optional[LaneGraphEdgeMapObject]] = dict()
-        self._visited = set()
-
-    def search(
-        self, target_edge: LaneGraphEdgeMapObject, max_depth: int
-    ) -> Tuple[List[LaneGraphEdgeMapObject], bool]:
-
-        start_edge = self._queue[0]
-
-        # Initial search states
-        path_found: bool = False
-        end_edge: LaneGraphEdgeMapObject = start_edge
-        end_depth: int = 1
-        depth: int = 1
-
-        self._parent[start_edge.id + f"_{depth}"] = None
-
-        while self._queue:
-            current_edge = self._queue.popleft()
-            if current_edge is not None:
-                self._visited.add(current_edge.id)
-
-            # Early exit condition
-            if self._check_end_condition(depth, max_depth):
-                break
-
-            # Depth tracking
-            if current_edge is None:
-                depth += 1
-                self._queue.append(None)
-                if self._queue[0] is None:
-                    break
-                continue
-
-            # Goal condition
-            if self._check_goal_condition(current_edge, target_edge):
-                end_edge = current_edge
-                end_depth = depth
-                path_found = True
-                break
-
-            # Populate queue
-            for next_edge in current_edge.outgoing_edges:
-                if next_edge.id not in self._visited:
-                    self._queue.append(next_edge)
-                    self._parent[next_edge.id + f"_{depth + 1}"] = current_edge
-                    end_edge = next_edge
-                    end_depth = depth + 1
-
-        return self._construct_path(end_edge, end_depth), path_found
-
-    @staticmethod
-    def _check_end_condition(depth: int, target_depth: int) -> bool:
-        """
-        Check if the search should end regardless if the goal condition is met.
-        :param depth: The current depth to check.
-        :param target_depth: The target depth to check against.
-        :return: True if:
-            - The current depth exceeds the target depth.
-        """
-        return depth > target_depth
-
-    @staticmethod
-    def _check_goal_condition(
-        current_edge: LaneGraphEdgeMapObject,
-        target_edge: LaneGraphEdgeMapObject,
-    ) -> bool:
-        return current_edge.id == target_edge.id
-
-    def _construct_path(self, end_edge: LaneGraphEdgeMapObject, depth: int) -> List[LaneGraphEdgeMapObject]:
-        """
-        :param end_edge: The end edge to start back propagating back to the start edge.
-        :param depth: The depth of the target edge.
-        :return: The constructed path as a list of LaneGraphEdgeMapObject
-        """
-        path = [end_edge]
-        while self._parent[end_edge.id + f"_{depth}"] is not None:
-            path.append(self._parent[end_edge.id + f"_{depth}"])
-            end_edge = self._parent[end_edge.id + f"_{depth}"]
-            depth -= 1
-        path.reverse()
-
-        return path
