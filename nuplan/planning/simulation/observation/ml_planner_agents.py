@@ -11,10 +11,14 @@ from nuplan.common.actor_state.state_representation import StateSE2, StateVector
 from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
+from nuplan.common.geometry.transform import translate_longitudinally
 from nuplan.common.maps.abstract_map import AbstractMap
-from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject, RoadBlockGraphEdgeMapObject
+from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
+from nuplan.planning.simulation.controller.motion_model.abstract_motion_model import AbstractMotionModel
+from nuplan.planning.simulation.controller.tracker.abstract_tracker import AbstractTracker
+from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
 from nuplan.planning.simulation.observation.observation_type import Observation
@@ -25,6 +29,7 @@ from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
 
 from nuplan.planning.simulation.planner.ml_planner.ml_planner import MLPlanner
 from nuplan.planning.simulation.simulation_time_controller.simulation_iteration import SimulationIteration
+from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 
 from nuplan.planning.simulation.trajectory.trajectory_sampling import TrajectorySampling
@@ -56,24 +61,30 @@ IDM_AGENT_CONFIG = {
 PDM_CLOSED_AGENT_CONFIG = {  
     "trajectory_sampling": TrajectorySampling(num_poses=80, interval_length= 0.1),
     "proposal_sampling": TrajectorySampling(num_poses=40, interval_length= 0.1),
-    "idm_policies": BatchIDMPolicy(speed_limit_fraction= [0.2,0.4,0.6,0.8,1.0], 
-                                    fallback_target_velocity= 15.0, 
-                                    min_gap_to_lead_agent= 1.0,
-                                    headway_time= 1.5,
-                                    accel_max= 1.5,
-                                    decel_max= 3.0),
     "lateral_offsets": [-1.0, 1.0], 
     "map_radius": 50,
 }
 
+PDM_BATCH_IDM_CONFIG = {
+    "speed_limit_fraction":[0.2,0.4,0.6,0.8,1.0], 
+    "fallback_target_velocity":15.0, 
+    "min_gap_to_lead_agent":1.0,
+    "headway_time":1.5,
+    "accel_max":1.5,
+    "decel_max":3.0
+}
+
+PDM_OFFSET_MODEL_CONFIG = {
+    "trajectory_sampling": TrajectorySampling(num_poses=16, interval_length=0.5), 
+    "history_sampling": TrajectorySampling(num_poses=10, interval_length=0.2),
+    "planner": None,
+    "centerline_samples": 120,
+    "centerline_interval": 1.0,
+    "hidden_dim": 512
+}
+
 PDM_HYBRID_AGENT_CONFIG = {  
-    "model":PDMOffsetModel(trajectory_sampling=TrajectorySampling(num_poses=16, interval_length=0.5), 
-                        history_sampling=TrajectorySampling(num_poses=10, interval_length=0.2),
-                        planner=None,
-                        centerline_samples=120,
-                        centerline_interval=1.0,
-                        hidden_dim=512),
-    "correction_horizon":2.0,
+    "correction_horizon": 2.0,
 }
 
 
@@ -82,7 +93,7 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, pdm_hybrid_ckpt: str) -> None:
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
@@ -99,6 +110,8 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache: Dict = {}
         self._inference_frequency: float = 0.2
         self._full_inference_distance: float = 30
+
+        self._motion_controller = TwoStageController(scenario, tracker, motion_model)
 
     def reset(self) -> None:
         """Inherited, see superclass."""
@@ -202,9 +215,21 @@ class MLPlannerAgents(AbstractObservation):
                 planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)                    
                 trajectory = agent_data['planner'].compute_trajectory(planner_input)
                 self._trajectory_cache[agent_token] = (next_iteration.time_point.time_s, trajectory)
-
-            agent_data['ego_state'] = trajectory.get_state_at_time(next_iteration.time_point)
+                
+            agent_data['ego_state'] = self._get_new_state_from_trajectory(iteration, next_iteration, agent_data['ego_state'], trajectory)
             self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
+
+
+    def _get_new_state_from_trajectory(self, current_iteration: SimulationIteration,
+                                                next_iteration: SimulationIteration,
+                                                ego_state: EgoState,
+                                                trajectory: AbstractTrajectory) -> EgoState:
+        """
+        Gets the state of the agent at a given timepoint from a trajectory.
+        """
+        self._motion_controller.reset()
+        self._motion_controller.update_state(current_iteration, next_iteration, ego_state, trajectory)
+        return self._motion_controller.get_state()
             
     def _build_ego_state_from_agent(self, agent: Agent, time_point: TimePoint) -> EgoState:
         """
@@ -219,10 +244,11 @@ class MLPlannerAgents(AbstractObservation):
             self._ego_state_history[agent.metadata.track_token] = {}
 
         # Most of this is just eyeballed, so there may be a more principled way of setting these values.
-        output = EgoState.build_from_center(
-            center=agent.center,
-            center_velocity_2d=agent.velocity if self.planner_type != "idm" else StateVector2D(agent.velocity.magnitude(), 0),
-            center_acceleration_2d=StateVector2D(0, 0),
+            
+        output = EgoState.build_from_rear_axle(
+            rear_axle_pose=translate_longitudinally(agent.center, agent.box.length * 1 / 5 - agent.box.length / 2),
+            rear_axle_velocity_2d=StateVector2D(agent.velocity.magnitude(), 0), #EgoState and Agent uses different velocity representations. It's very weird.
+            rear_axle_acceleration_2d=StateVector2D(0, 0),
             tire_steering_angle=0,
             time_point=time_point,
             vehicle_parameters=VehicleParameters(
@@ -244,12 +270,14 @@ class MLPlannerAgents(AbstractObservation):
         """
         Builds agent state from corresponding ego state. Unlike the inverse this process is well-defined.
         """
+        track_heading = ego_state.car_footprint.oriented_box.center.heading
+        velocity = ego_state.dynamic_car_state.center_velocity_2d
 
         agent_state = Agent(
             metadata=scene_object_metadata,
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=ego_state.car_footprint.oriented_box,
-            velocity=ego_state.dynamic_car_state.center_velocity_2d,
+            velocity=StateVector2D(np.cos(track_heading) * velocity.magnitude(), np.sin(track_heading) * velocity.magnitude())
         )
         return agent_state
     
@@ -317,12 +345,10 @@ class MLPlannerAgents(AbstractObservation):
         """
         # TODO: Inject IDM agents (and non-ML agents more broadly)
 
-        self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
-
         route_plan = self._get_roadblock_path(agent, goal)
 
         if route_plan:
-            self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
+            self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
 
             # Initialize planner.
             planner_init = PlannerInitialization(
@@ -340,10 +366,11 @@ class MLPlannerAgents(AbstractObservation):
         elif self.planner_type == "idm":
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
         elif self.planner_type == "pdm_closed":
-            planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG)
+            planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
         elif self.planner_type == "pdm_hybrid":
             assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
-            planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, **PDM_HYBRID_AGENT_CONFIG, checkpoint_path=self.pdm_hybrid_ckpt)
+            planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG), \
+                                       **PDM_HYBRID_AGENT_CONFIG, model= PDMOffsetModel(**PDM_OFFSET_MODEL_CONFIG), checkpoint_path=self.pdm_hybrid_ckpt)
         else:
             raise ValueError("Invalid planner type.")
 
