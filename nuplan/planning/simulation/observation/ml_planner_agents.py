@@ -21,7 +21,7 @@ from nuplan.planning.simulation.controller.tracker.abstract_tracker import Abstr
 from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
-from nuplan.planning.simulation.observation.ml_planner_agents.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
+from nuplan.planning.simulation.observation.mlpa.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks, Observation
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
