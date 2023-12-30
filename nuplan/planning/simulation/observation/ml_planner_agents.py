@@ -420,7 +420,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
     
-    def _extend_path(self, route_plan: List[str], min_path_length: 10):
+    def _extend_path(self, route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
         """
         Extends a route plan to a given depth by continually going forward.
         """
@@ -431,9 +431,10 @@ class MLPlannerAgents(AbstractObservation):
             if not outgoing_edges:
                 break
 
-            curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in outgoing_edges]
-            idx = np.argmin(curvatures)
-            route_plan.append(outgoing_edges[idx])
+            sorted_outgoing_edges = sorted(outgoing_edges, key= lambda edge: edge.baseline_path.get_curvature_at_arc_length(0.0))
+            sorted_curvatures = [edge.baseline_path.get_curvature_at_arc_length(0.0) for edge in sorted_outgoing_edges]
+            idx = np.argmin(sorted_curvatures) + path_direction_offset
+            route_plan.append(sorted_outgoing_edges[idx])
 
         return route_plan
 
