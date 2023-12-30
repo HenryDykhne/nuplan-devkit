@@ -4,8 +4,24 @@ from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject
 
 
 class MaxDepthBreadthFirstSearch:
+    """
+    A class that performs iterative breadth first search. The class operates on lane level graph search.
+
+    The majority of this class is copied from nuplan/planning/simulation/planner/utils/breadth_first_search.py, but
+    modified such that the target edge can be at any depth less then the max depth, not just the target depth.
+
+    If no path is found, the longest acyclic path is returned.
+    """
 
     def __init__(self, start_edge: LaneGraphEdgeMapObject):
+        """
+        :param start_edge: The start edge to search from.
+        
+        _queue: A queue of remaining edges to search in BFS.
+        _parent: A dictionary of edges to their parent edges. Used to construct the path.
+        _visited: A set of visited edges. Used to prevent cycles.
+        """
+
         self._queue = deque([start_edge, None])
         self._parent: Dict[str, Optional[LaneGraphEdgeMapObject]] = dict()
         self._visited = set()
