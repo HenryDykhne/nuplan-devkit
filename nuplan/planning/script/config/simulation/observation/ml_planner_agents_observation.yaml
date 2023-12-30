@@ -7,6 +7,7 @@ occlusions: false  # Boolean to determine whether occlusions should be enabled
 planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm_closed", "pdm_hybrid")
 pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
 
+# These defaults are taken from two_stage_controller.yaml
 tracker: 
   _target_: nuplan.planning.simulation.controller.tracker.lqr.LQRTracker
   _convert_: 'all'

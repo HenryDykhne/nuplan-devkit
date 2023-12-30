@@ -46,6 +46,8 @@ OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BIC
                              TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, \
                              TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
 
+
+# Taken from idm_planner.yaml
 IDM_AGENT_CONFIG = {  
     "target_velocity": 10,             # Desired velocity in free traffic [m/s]
     "min_gap_to_lead_agent": 1.0,      # Minimum relative distance to lead vehicle [m]
@@ -57,7 +59,7 @@ IDM_AGENT_CONFIG = {
     "occupancy_map_radius": 40,        # The range around the ego to add objects to be considered [m]
 }
 
-
+# Taken from pdm_closed_planner.yaml in the TuPlan code
 PDM_CLOSED_AGENT_CONFIG = {  
     "trajectory_sampling": TrajectorySampling(num_poses=80, interval_length= 0.1),
     "proposal_sampling": TrajectorySampling(num_poses=40, interval_length= 0.1),
@@ -74,6 +76,7 @@ PDM_BATCH_IDM_CONFIG = {
     "decel_max":3.0
 }
 
+# Taken from pdm_hybrid_planner.yaml in the TuPlan code
 PDM_OFFSET_MODEL_CONFIG = {
     "trajectory_sampling": TrajectorySampling(num_poses=16, interval_length=0.5), 
     "history_sampling": TrajectorySampling(num_poses=10, interval_length=0.2),
