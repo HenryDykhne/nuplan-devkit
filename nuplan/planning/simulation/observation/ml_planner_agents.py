@@ -22,8 +22,7 @@ from nuplan.planning.simulation.controller.two_stage_controller import TwoStageC
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
 from nuplan.planning.simulation.observation.ml_planner_agents.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
-from nuplan.planning.simulation.observation.observation_type import Observation
-from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
+from nuplan.planning.simulation.observation.observation_type import DetectionsTracks, Observation
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
@@ -104,6 +103,7 @@ class MLPlannerAgents(AbstractObservation):
         :param model: Model to use for inference.
         :param scenario: scenario
         """
+
         self.current_iteration = 0
         self.model = model
         self.planner_type = planner_type
@@ -175,7 +175,6 @@ class MLPlannerAgents(AbstractObservation):
     ) -> None:
         """Inherited, see superclass."""
         self.current_iteration = next_iteration.index
-        #self._add_newly_detected_agents(next_iteration) #- Adds new agents. This causes some weird behaviour, so commented out for now.
         self.propagate_agents(iteration, next_iteration, history)
 
     def _get_open_loop_track_objects(self, iteration: int) -> List[TrackedObject]:
@@ -224,6 +223,7 @@ class MLPlannerAgents(AbstractObservation):
         """
         Gets the state of the agent at a given timepoint from a trajectory.
         """
+
         self._motion_controller.reset()
         self._motion_controller.update_state(current_iteration, next_iteration, ego_state, trajectory)
         return self._motion_controller.get_state()
@@ -267,6 +267,7 @@ class MLPlannerAgents(AbstractObservation):
         """
         Builds agent state from corresponding ego state. Unlike the inverse this process is well-defined.
         """
+
         track_heading = ego_state.car_footprint.oriented_box.center.heading
         velocity = ego_state.dynamic_car_state.center_velocity_2d
 
@@ -283,6 +284,7 @@ class MLPlannerAgents(AbstractObservation):
         Builds the planner history input for a given agent. This requires us the interchange the ego states of the actual ego with the 
         constructed ego states of the agent of interest, and create observations corresponding to the ego in the observation history buffer.
         """
+
         ego_state_buffer = history.ego_state_buffer
         observation_buffer = history.observation_buffer
 
@@ -356,6 +358,10 @@ class MLPlannerAgents(AbstractObservation):
             self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
     def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
+        """
+        Create a record for an agent that contains the agent's ego state, metadata, and planner. 
+        This is propagated through the simulation.
+        """
 
         if self.planner_type == "ml":
             planner = MLPlanner(self.model)
@@ -376,6 +382,10 @@ class MLPlannerAgents(AbstractObservation):
                 'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
+        """
+        Gets the last known state of an agent and returns it.
+        """
+
         for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index, -1):
             last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
             for track in last_scenario_frame.tracked_objects.tracked_objects:
@@ -385,6 +395,9 @@ class MLPlannerAgents(AbstractObservation):
         return None
     
     def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
+        """
+        Gets a path from the agent's current position to a goal position using a max depth BFS.
+        """
 
         start_edge, _ = self._get_target_state_segment(agent.center, self._scenario.map_api)
         end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
@@ -411,6 +424,7 @@ class MLPlannerAgents(AbstractObservation):
         """
         Extends a route plan to a given depth by continually going forward.
         """
+
         while len(route_plan) < min_path_length:
             outgoing_edges = route_plan[-1].outgoing_edges
 
@@ -432,6 +446,7 @@ class MLPlannerAgents(AbstractObservation):
         :param map_api: An AbstractMap instance.
         :return: GraphEdgeMapObject and progress along the segment. If no map object is found then None.
         """
+        
         if map_api.is_in_layer(target_state, SemanticMapLayer.LANE):
             layer = SemanticMapLayer.LANE
         elif map_api.is_in_layer(target_state, SemanticMapLayer.INTERSECTION):
