@@ -42,6 +42,7 @@ class BokehAgentStates(NamedTuple):
     speeds: List[float]  # [m/s], A list of speed.
     headings: List[float]  # [m], a list of headings
     occluded: List[bool] # A list of occlusion flags
+    unnoticed: List[bool] # A list of unnoticed flags
 
 
 @dataclass(frozen=True)
@@ -454,6 +455,8 @@ class AgentStatePlot(BaseScenarioPlot):
                     data = dict(data_source.data)
                     agent_color = simulation_tile_agent_style.get(category)
                     data['occ_color'] = ['#000000' if occ else agent_color["fill_color"] for occ in data['occluded']]
+                    data['unnot_color'] = ['#000000' if un else agent_color["line_color"] for un in data['unnoticed']]
+                    data['unnot_width'] = [agent_color["line_width"]*2 if un else agent_color["line_width"] for un in data['unnoticed']]
 
                     if plot is None:
                         self.plots[category] = main_figure.multi_polygons(
@@ -461,8 +464,8 @@ class AgentStatePlot(BaseScenarioPlot):
                             ys="ys",
                             fill_color={"field": "occ_color"},
                             fill_alpha=agent_color["fill_alpha"],
-                            line_color=agent_color["line_color"],
-                            line_width=agent_color["line_width"],
+                            line_color={"field": "unnot_color"},
+                            line_width={"field": "unnot_width"},
                             source=data,
                         )
                         agent_hover = HoverTool(
@@ -477,6 +480,7 @@ class AgentStatePlot(BaseScenarioPlot):
                                 ("type", "@agent_type"),
                                 ("track token", "@track_token"),
                                 ("occluded", "@occluded"),
+                                ("unnoticed", "@unnoticed"),
                             ],
                         )
                         main_figure.add_tools(agent_hover)
@@ -517,6 +521,7 @@ class AgentStatePlot(BaseScenarioPlot):
                     speeds = []
                     headings = []
                     occluded = []
+                    unnoticed = []
 
                     for tracked_object in tracked_objects.get_tracked_objects_of_type(tracked_object_type):
                         agent_corners = tracked_object.box.all_corners()
@@ -538,8 +543,10 @@ class AgentStatePlot(BaseScenarioPlot):
 
                         if history.occlusion_masks is not None:
                             occluded.append(tracked_object.track_token not in history.occlusion_masks[time_us])
+                            unnoticed.append(tracked_object.track_token not in history.notice_masks[time_us])
                         else:
                             occluded.append(False)
+                            unnoticed.append(False)
 
                     agent_states = BokehAgentStates(
                         xs=corner_xs,
@@ -554,6 +561,7 @@ class AgentStatePlot(BaseScenarioPlot):
                         speeds=speeds,
                         headings=headings,
                         occluded=occluded,
+                        unnoticed=unnoticed,
                     )
 
                     frame_dict[tracked_object_type_name] = ColumnDataSource(agent_states._asdict())

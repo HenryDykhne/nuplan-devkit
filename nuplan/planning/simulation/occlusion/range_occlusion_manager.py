@@ -13,9 +13,11 @@ class RangeOcclusionManager(AbstractOcclusionManager):
     def __init__(
         self,
         scenario: AbstractScenario,
+        uncloak_reaction_time,
+        notice_threshold,
         range_threshold: float = 25
     ):
-        super().__init__(scenario)
+        super().__init__(scenario, uncloak_reaction_time, notice_threshold)
         self.range_threshold = range_threshold
 
     def _compute_visible_agents(self, ego_state: EgoState, observations: DetectionsTracks) -> set:
