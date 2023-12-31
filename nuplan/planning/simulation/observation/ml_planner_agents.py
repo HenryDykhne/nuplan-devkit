@@ -1,6 +1,8 @@
 from collections import deque
 from copy import deepcopy
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Tuple, Type
+
+import numpy as np
 
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.ego_state import EgoState
@@ -9,36 +11,55 @@ from nuplan.common.actor_state.state_representation import StateSE2, StateVector
 from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
+from nuplan.common.geometry.transform import translate_longitudinally
+from nuplan.common.maps.abstract_map import AbstractMap
+from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
+from nuplan.planning.simulation.controller.motion_model.abstract_motion_model import AbstractMotionModel
+from nuplan.planning.simulation.controller.tracker.abstract_tracker import AbstractTracker
+from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
-from nuplan.planning.simulation.observation.observation_type import Observation
-from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
+from nuplan.planning.simulation.observation.mlpa.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
+from nuplan.planning.simulation.observation.mlpa.planner_config_constants import IDM_AGENT_CONFIG, OPEN_LOOP_DETECTION_TYPES, PDM_CLOSED_AGENT_CONFIG, \
+                                                                                    PDM_HYBRID_AGENT_CONFIG, PDM_BATCH_IDM_CONFIG, \
+                                                                                    PDM_OFFSET_MODEL_CONFIG
+from nuplan.planning.simulation.observation.observation_type import DetectionsTracks, Observation
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
+from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
+
 from nuplan.planning.simulation.planner.ml_planner.ml_planner import MLPlanner
 from nuplan.planning.simulation.simulation_time_controller.simulation_iteration import SimulationIteration
+from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
 
+from tuplan_garage.planning.training.modeling.models.pdm_offset_model import PDMOffsetModel
+from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_closed_planner import PDMClosedPlanner
+from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_hybrid_planner import PDMHybridPlanner
 
-OPEN_LOOP_DETECTION_TYPES = [TrackedObjectType.PEDESTRIAN, TrackedObjectType.BICYCLE, \
-                             TrackedObjectType.CZONE_SIGN, TrackedObjectType.BARRIER, \
-                             TrackedObjectType.TRAFFIC_CONE, TrackedObjectType.GENERIC_OBJECT]
+from tuplan_garage.planning.simulation.planner.pdm_planner.proposal.batch_idm_policy import BatchIDMPolicy
+
+from nuplan.common.maps.maps_datatypes import SemanticMapLayer
 
 class MLPlannerAgents(AbstractObservation):
     """
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool) -> None:
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, \
+                 pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
         :param scenario: scenario
         """
+
         self.current_iteration = 0
         self.model = model
+        self.planner_type = planner_type
+        self.pdm_hybrid_ckpt = pdm_hybrid_ckpt
         self._scenario = scenario
         self._occlusions = occlusions
         self._ego_state_history: Dict = {}
@@ -46,7 +67,8 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache: Dict = {}
         self._inference_frequency: float = 0.2
         self._full_inference_distance: float = 30
-        self._agent_presence_threshold: float = 10
+
+        self._motion_controller = TwoStageController(scenario, tracker, motion_model)
 
     def reset(self) -> None:
         """Inherited, see superclass."""
@@ -65,28 +87,23 @@ class MLPlannerAgents(AbstractObservation):
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
-                
-                # TODO: Support ego controllers - right now just doing perfect tracking.
-                #       Revist whether there is a better way of translating agent states to ego states. 
-                #       Revist whether there is a better way of setting agent goals.
-                #       Filter out impossible/off-road initial detections.
-
-                # Sets agent goal to be it's last known point in the simulation. This results in some strange driving behaviour
-                # if the agent disappears early in a scene.
+                # Sets agent goal to be it's last known point in the simulation. 
                 goal = self._get_historical_agent_goal(agent, self.current_iteration)
-                #print(goal)
                 if goal:
-                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
 
-                    # Initialize planner.
-                    planner_init = PlannerInitialization(
-                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+                    route_plan = self._get_roadblock_path(agent, goal)
+
+                    if route_plan:
+                        self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
+
+                        # Initialize planner.
+                        planner_init = PlannerInitialization(
+                            route_roadblock_ids=route_plan,
                             mission_goal=goal,
                             map_api=self._scenario.map_api,
                         )
-                    
-                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+                        self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
         return self._agents
 
@@ -110,7 +127,6 @@ class MLPlannerAgents(AbstractObservation):
     ) -> None:
         """Inherited, see superclass."""
         self.current_iteration = next_iteration.index
-        #self._add_newly_detected_agents(next_iteration) #- Adds new agents. This causes some weird behaviour, so commented out for now.
         self.propagate_agents(iteration, next_iteration, history)
 
     def _get_open_loop_track_objects(self, iteration: int) -> List[TrackedObject]:
@@ -132,7 +148,6 @@ class MLPlannerAgents(AbstractObservation):
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         # TODO: Find way to parallelize.
-        # TODO: Propagate non-ego and lower frequency to improve performance.
         for agent_token, agent_data in self._agents.items():
             if agent_token in self._trajectory_cache and \
                 (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._inference_frequency and \
@@ -143,14 +158,27 @@ class MLPlannerAgents(AbstractObservation):
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
 
                 if agent_data['occlusion'] is not None:
-                    planner_input = agent_data['occlusion'].occlude_input(history_input)
+                    history_input = agent_data['occlusion'].occlude_input(history_input)
 
                 planner_input = PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)                    
                 trajectory = agent_data['planner'].compute_trajectory(planner_input)
                 self._trajectory_cache[agent_token] = (next_iteration.time_point.time_s, trajectory)
-
-            agent_data['ego_state'] = trajectory.get_state_at_time(next_iteration.time_point)
+                
+            agent_data['ego_state'] = self._get_new_state_from_trajectory(iteration, next_iteration, agent_data['ego_state'], trajectory)
             self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
+
+
+    def _get_new_state_from_trajectory(self, current_iteration: SimulationIteration,
+                                                next_iteration: SimulationIteration,
+                                                ego_state: EgoState,
+                                                trajectory: AbstractTrajectory) -> EgoState:
+        """
+        Gets the state of the agent at a given timepoint from a trajectory.
+        """
+
+        self._motion_controller.reset()
+        self._motion_controller.update_state(current_iteration, next_iteration, ego_state, trajectory)
+        return self._motion_controller.get_state()
             
     def _build_ego_state_from_agent(self, agent: Agent, time_point: TimePoint) -> EgoState:
         """
@@ -165,10 +193,11 @@ class MLPlannerAgents(AbstractObservation):
             self._ego_state_history[agent.metadata.track_token] = {}
 
         # Most of this is just eyeballed, so there may be a more principled way of setting these values.
-        output = EgoState.build_from_center(
-            center=agent.center,
-            center_velocity_2d=agent.velocity,
-            center_acceleration_2d=StateVector2D(0, 0),
+            
+        output = EgoState.build_from_rear_axle(
+            rear_axle_pose=translate_longitudinally(agent.center, agent.box.length * 1 / 5 - agent.box.length / 2),
+            rear_axle_velocity_2d=StateVector2D(agent.velocity.magnitude(), 0), #EgoState and Agent uses different velocity representations. It's very weird.
+            rear_axle_acceleration_2d=StateVector2D(0, 0),
             tire_steering_angle=0,
             time_point=time_point,
             vehicle_parameters=VehicleParameters(
@@ -191,11 +220,14 @@ class MLPlannerAgents(AbstractObservation):
         Builds agent state from corresponding ego state. Unlike the inverse this process is well-defined.
         """
 
+        track_heading = ego_state.car_footprint.oriented_box.center.heading
+        velocity = ego_state.dynamic_car_state.center_velocity_2d
+
         agent_state = Agent(
             metadata=scene_object_metadata,
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=ego_state.car_footprint.oriented_box,
-            velocity=ego_state.dynamic_car_state.center_velocity_2d,
+            velocity=StateVector2D(np.cos(track_heading) * velocity.magnitude(), np.sin(track_heading) * velocity.magnitude())
         )
         return agent_state
     
@@ -204,6 +236,7 @@ class MLPlannerAgents(AbstractObservation):
         Builds the planner history input for a given agent. This requires us the interchange the ego states of the actual ego with the 
         constructed ego states of the agent of interest, and create observations corresponding to the ego in the observation history buffer.
         """
+
         ego_state_buffer = history.ego_state_buffer
         observation_buffer = history.observation_buffer
 
@@ -238,9 +271,9 @@ class MLPlannerAgents(AbstractObservation):
             # Convert agent state to a corresponding "ego state" object, or pull it from cache if already computed.
             if matched_agent is None:
                 faux_ego_observation = deepcopy(current_state)
-                faux_ego_observation._time_point = ego_state.time_point
+                faux_ego_observation._time_point = deepcopy(ego_state.time_point)
             else:
-                faux_ego_observation = self._build_ego_state_from_agent(matched_agent, ego_state.time_point)
+                faux_ego_observation = self._build_ego_state_from_agent(matched_agent, deepcopy(ego_state.time_point))
 
 
             # Rebuild timestep and buffer - creating a new observations object with old ego appended.
@@ -261,26 +294,51 @@ class MLPlannerAgents(AbstractObservation):
         """
         Adds agent to the scene with a given goal during the simulation runtime.
         """
-        # TODO: Inject IDM agents (and non-ML agents more broadly)
 
-        self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
+        route_plan = self._get_roadblock_path(agent, goal)
 
-        planner_init = PlannerInitialization(
-                route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
+        if route_plan:
+            self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
+
+            # Initialize planner.
+            planner_init = PlannerInitialization(
+                route_roadblock_ids=route_plan,
                 mission_goal=goal,
                 map_api=self._scenario.map_api,
             )
-        
-        self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+            self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
     def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
+        """
+        Create a record for an agent that contains the agent's ego state, metadata, and planner. 
+        This is propagated through the simulation.
+        """
+
+        if self.planner_type == "ml":
+            planner = MLPlanner(self.model)
+        elif self.planner_type == "idm":
+            planner = IDMPlanner(**IDM_AGENT_CONFIG)
+        elif self.planner_type == "pdm_closed":
+            planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
+        elif self.planner_type == "pdm_hybrid":
+            assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
+            planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG), \
+                                       **PDM_HYBRID_AGENT_CONFIG, model= PDMOffsetModel(**PDM_OFFSET_MODEL_CONFIG), checkpoint_path=self.pdm_hybrid_ckpt)
+        else:
+            raise ValueError("Invalid planner type.")
+
         return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                 'metadata': agent.metadata,
-                'planner': MLPlanner(self.model),
+                'planner': planner,
                 'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
-        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index+self._agent_presence_threshold, -1):
+        """
+        Gets the last known state of an agent and returns it.
+        """
+
+        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index, -1):
             last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
             for track in last_scenario_frame.tracked_objects.tracked_objects:
                 if track.metadata.track_token == agent.metadata.track_token:
@@ -288,20 +346,78 @@ class MLPlannerAgents(AbstractObservation):
 
         return None
     
-    def _add_newly_detected_agents(self, next_iteration: SimulationIteration):
-        for agent in self._scenario.get_tracked_objects_at_iteration(next_iteration.index).tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
-            if agent.metadata.track_token not in self._agents:
-                goal = self._get_historical_agent_goal(agent, next_iteration.index)
+    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
+        """
+        Gets a path from the agent's current position to a goal position using a max depth BFS.
+        """
 
-                if goal:
-                    # Estimates ego states from agent state at simulation starts, stores metadata and creates planner for each agent
-                    self._agents[agent.metadata.track_token] = self._build_agent_record(agent, next_iteration.time_point)
+        start_edge, _ = self._get_target_state_segment(agent.center, self._scenario.map_api)
+        end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
 
-                    # Initialize planner.
-                    planner_init = PlannerInitialization(
-                            route_roadblock_ids=self._scenario.get_route_roadblock_ids(),
-                            mission_goal=goal,
-                            map_api=self._scenario.map_api,
-                        )
-                    
-                    self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+        if start_edge is None:
+            return None
+        
+        if end_edge is not None:
+            gs = MaxDepthBreadthFirstSearch(start_edge)
+            route_plan, path_found = gs.search(end_edge, max_depth)
+        else:
+            route_plan = [start_edge]
+
+        route_plan = self._extend_path(route_plan, max_depth)        
+        route_plan = [edge.get_roadblock_id() for edge in route_plan]
+        route_plan = list(dict.fromkeys(route_plan))
+        
+        if len(route_plan) == 1:
+            route_plan = route_plan + route_plan
+
+        return route_plan
+    
+    def _extend_path(self, route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
+        """
+        Extends a route plan to a given depth by continually going forward.
+        """
+
+        while len(route_plan) < min_path_length:
+            outgoing_edges = route_plan[-1].outgoing_edges
+
+            if not outgoing_edges:
+                break
+
+            sorted_outgoing_edges = sorted(outgoing_edges, key= lambda edge: edge.baseline_path.get_curvature_at_arc_length(0.0))
+            absolute_curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in sorted_outgoing_edges]
+            idx = np.argmin(absolute_curvatures) + path_direction_offset
+            idx = min(max(idx, 0), len(sorted_outgoing_edges)-1)
+            route_plan.append(sorted_outgoing_edges[idx])
+
+        return route_plan
+
+    def _get_target_state_segment(
+        self, target_state: StateSE2, map_api: AbstractMap
+    ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
+        """
+        Gets the map object that the target state is on and the progress along the segment.
+        :param target_state: The target_state of interest.
+        :param map_api: An AbstractMap instance.
+        :return: GraphEdgeMapObject and progress along the segment. If no map object is found then None.
+        """
+        
+        if map_api.is_in_layer(target_state, SemanticMapLayer.LANE):
+            layer = SemanticMapLayer.LANE
+        elif map_api.is_in_layer(target_state, SemanticMapLayer.INTERSECTION):
+            layer = SemanticMapLayer.LANE_CONNECTOR
+        else:
+            return None, None
+
+        segments: List[LaneGraphEdgeMapObject] = map_api.get_all_map_objects(target_state, layer)
+        if not segments:
+            return None, None
+
+        # Get segment with the closest heading to the agent
+        heading_diff = [
+            segment.baseline_path.get_nearest_pose_from_position(target_state).heading - target_state.heading
+            for segment in segments
+        ]
+        closest_segment = segments[np.argmin(np.abs(heading_diff))]
+
+        progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
+        return closest_segment, progress
