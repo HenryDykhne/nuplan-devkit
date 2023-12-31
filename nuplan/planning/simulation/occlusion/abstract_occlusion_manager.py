@@ -27,7 +27,9 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         assert uncloak_reaction_time >= 0.0, f"Uncloak reaction time ({uncloak_reaction_time}) must be non-negative."
         assert notice_threshold >= 0.0, f"Notice threshold ({notice_threshold}) must be non-negative."
         assert notice_threshold <= uncloak_reaction_time, f"Notice threshold ({notice_threshold}) must be less than or equal to uncloak reaction time ({uncloak_reaction_time})."
-        self.reset()
+        self._visible_agent_cache = {}
+        self._noticed_agent_cache = {} 
+        self._historical_noticed_agent_cache = {} # this exists because the display needs the noticed values at the time they were initially computed and they can change with subsequent occlusions
         self.scenario = scenario
         self.uncloak_reaction_time = uncloak_reaction_time 
         self.notice_threshold = notice_threshold 
