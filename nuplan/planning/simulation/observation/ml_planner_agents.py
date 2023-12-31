@@ -67,6 +67,7 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache: Dict = {}
         self._inference_frequency: float = 0.2
         self._full_inference_distance: float = 30
+        self._static_agents: List[Agent] = []
 
         self._motion_controller = TwoStageController(scenario, tracker, motion_model)
 
@@ -76,6 +77,7 @@ class MLPlannerAgents(AbstractObservation):
         self._agents = None
         self._trajectory_cache = {}
         self._ego_state_history = {}
+        self._static_agents = []
         
     def _get_agents(self):
         """
@@ -89,7 +91,13 @@ class MLPlannerAgents(AbstractObservation):
 
                 # Sets agent goal to be it's last known point in the simulation. 
                 goal = self._get_historical_agent_goal(agent, self.current_iteration)
+
+
                 if goal:
+
+                    if self._is_parked_vehicle(agent, goal, self._scenario.map_api):
+                        self._static_agents.append(agent)
+                        continue
 
                     route_plan = self._get_roadblock_path(agent, goal)
 
@@ -120,6 +128,7 @@ class MLPlannerAgents(AbstractObservation):
         agents = [self._build_agent_from_ego_state(v['ego_state'], v['metadata']) for v in self._get_agents().values()]
         open_loop_detections = self._get_open_loop_track_objects(self.current_iteration)
         open_loop_detections.extend(agents)
+        open_loop_detections.extend(self._static_agents)
         return DetectionsTracks(tracked_objects=TrackedObjects(open_loop_detections))
     
     def update_observation(
@@ -421,3 +430,14 @@ class MLPlannerAgents(AbstractObservation):
 
         progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
         return closest_segment, progress
+
+    def _is_parked_vehicle(self, agent: Agent, goal: StateSE2, map_api: AbstractMap, max_displacement: float = 1.0):
+        """
+        Checks if an agent is a parked vehicle.
+        """
+
+        if map_api.is_in_layer(agent.center, SemanticMapLayer.CARPARK_AREA):
+            if goal.distance_to(agent.center) < max_displacement:
+                return True
+            
+        return False
