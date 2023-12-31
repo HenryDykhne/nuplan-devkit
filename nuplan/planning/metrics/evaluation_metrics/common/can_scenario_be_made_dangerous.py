@@ -171,10 +171,10 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             return False
         
         UPPER_CUT = 0.95
-        LOWER_CUT = 0.05
+        LOWER_CUT = 0.30
         MIN_DISTANCE = 5 # meters
         MAX_DISTANCE = 80 # meters
-        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first and last 5% of the line
+        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first 30% and last 5% of the line
         for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
             detections = scenario.get_tracked_objects_at_iteration(iteration)
