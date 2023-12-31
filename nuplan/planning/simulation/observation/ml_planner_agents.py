@@ -432,8 +432,9 @@ class MLPlannerAgents(AbstractObservation):
                 break
 
             sorted_outgoing_edges = sorted(outgoing_edges, key= lambda edge: edge.baseline_path.get_curvature_at_arc_length(0.0))
-            sorted_curvatures = [edge.baseline_path.get_curvature_at_arc_length(0.0) for edge in sorted_outgoing_edges]
-            idx = np.argmin(sorted_curvatures) + path_direction_offset
+            absolute_curvatures = [abs(edge.baseline_path.get_curvature_at_arc_length(0.0)) for edge in sorted_outgoing_edges]
+            idx = np.argmin(absolute_curvatures) + path_direction_offset
+            idx = min(max(idx, 0), len(sorted_outgoing_edges)-1)
             route_plan.append(sorted_outgoing_edges[idx])
 
         return route_plan
