@@ -13,8 +13,8 @@ class RangeOcclusionManager(AbstractOcclusionManager):
     def __init__(
         self,
         scenario: AbstractScenario,
-        uncloak_reaction_time,
-        notice_threshold,
+        uncloak_reaction_time: float = AbstractOcclusionManager.__init__.__defaults__[0],
+        notice_threshold: float = AbstractOcclusionManager.__init__.__defaults__[1],
         range_threshold: float = 25
     ):
         super().__init__(scenario, uncloak_reaction_time, notice_threshold)

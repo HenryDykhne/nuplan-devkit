@@ -21,6 +21,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
     def __init__(
         self,
         scenario: AbstractScenario,
+        # these must be the first and second optional arguments to the constructor
         uncloak_reaction_time: float = 1.5, #seconds. I probably want this set to 1.5 for other agents and 0.0 - 0.5 for ego 
         notice_threshold: float = 1.0 # seconds 
     ):
@@ -95,6 +96,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         """
         Fills out the latest uncloak window for the _noticed_agent_cache. agents that are noticed at a timestep will always be noticed at that timestep
         """
+        print(ego_state_buffer[-1].time_us)
         self._noticed_agent_cache[ego_state_buffer[-1].time_us] = set()
         notice_threshold_over_sample_interval = int(self.notice_threshold / sample_interval)
         time_us_at_begining_of_window = ego_state_buffer[0].time_us
@@ -107,6 +109,8 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                 vis_count = sum(token in self._visible_agent_cache[ego_state.time_us] for ego_state in ego_state_buffer)
                 if vis_count >= notice_threshold_over_sample_interval:
                     for ego_state in ego_state_buffer:
+                        if ego_state.time_us not in self._noticed_agent_cache:
+                            self._noticed_agent_cache[ego_state.time_us] = set()
                         self._noticed_agent_cache[ego_state.time_us].add(token)
     ####################################################################################################################################   
 

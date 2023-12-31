@@ -25,8 +25,8 @@ class ShadowOcclusionManager(AbstractOcclusionManager):
     def __init__(
         self,
         scenario: AbstractScenario,
-        uncloak_reaction_time,
-        notice_threshold,
+        uncloak_reaction_time: float = AbstractOcclusionManager.__init__.__defaults__[0],
+        notice_threshold: float = AbstractOcclusionManager.__init__.__defaults__[1],
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
         min_rad: float = 0.026, # minimum radians that the vehicle must take up to be observed (0.026 = aprox 1.5 degrees)
     ):

@@ -23,8 +23,8 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
     def __init__(
         self,
         scenario: AbstractScenario,
-        uncloak_reaction_time,
-        notice_threshold,
+        uncloak_reaction_time: float = AbstractOcclusionManager.__init__.__defaults__[0],
+        notice_threshold: float = AbstractOcclusionManager.__init__.__defaults__[1],
         horizon_threshold: float = 1000, # meters since that is how far a standing human can see unblocked before the curvature of the earth cuts your line of sight
         num_wedges: float = 720, # 720 gives wedge width of roughly 0.5 degrees
         required_hits: int = 3 # at least 3 wedges must hit for a vehicle to be labeled visible
