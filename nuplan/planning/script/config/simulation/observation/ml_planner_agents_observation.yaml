@@ -7,8 +7,9 @@ planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm
 pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
 
 
-occlusion: false  # Boolean to determine whether occlusions should be enabled
-#occlusion.manager_type: "wedge"  # Boolean to determine whether occlusions should be enabled
+occlusion_cfg:  # Boolean to determine whether occlusions should be enabled
+  occlusion: false  # Boolean to determine whether occlusions should be enabled
+  manager_type: "wedge"  # options: [range, shadow, wedge]
 
 # These defaults are taken from two_stage_controller.yaml
 tracker: 
