@@ -48,7 +48,7 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, \
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusion: bool, planner_type: str, \
                  pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
@@ -61,7 +61,7 @@ class MLPlannerAgents(AbstractObservation):
         self.planner_type = planner_type
         self.pdm_hybrid_ckpt = pdm_hybrid_ckpt
         self._scenario = scenario
-        self._occlusions = occlusions
+        self._occlusion = occlusion
         self._ego_state_history: Dict = {}
         self._agents: Dict = None    
         self._trajectory_cache: Dict = {}
@@ -325,6 +325,7 @@ class MLPlannerAgents(AbstractObservation):
         """
 
         if self.planner_type == "ml":
+            assert self.model is not None, "Must provide model for ML planner."
             planner = MLPlanner(self.model)
         elif self.planner_type == "idm":
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
@@ -340,7 +341,7 @@ class MLPlannerAgents(AbstractObservation):
         return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                 'metadata': agent.metadata,
                 'planner': planner,
-                'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
+                'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusion else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """

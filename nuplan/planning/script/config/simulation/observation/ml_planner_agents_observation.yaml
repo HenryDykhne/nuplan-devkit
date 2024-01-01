@@ -1,11 +1,14 @@
 _target_: nuplan.planning.simulation.observation.ml_planner_agents.MLPlannerAgents
 _convert_: 'all'
 
-model_config: ???  # Dictionary key from existing planner model config (e.g. reactive_agents_model)
-checkpoint_path: ???  # Path to trained model checkpoint
-occlusions: false  # Boolean to determine whether occlusions should be enabled
+model_config: null  # Dictionary key from existing planner model config (e.g. reactive_agents_model)
+checkpoint_path: null  # Path to trained model checkpoint
 planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm_closed", "pdm_hybrid")
 pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
+
+
+occlusion: false  # Boolean to determine whether occlusions should be enabled
+#occlusion.manager_type: "wedge"  # Boolean to determine whether occlusions should be enabled
 
 # These defaults are taken from two_stage_controller.yaml
 tracker: 
