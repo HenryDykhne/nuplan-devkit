@@ -7,7 +7,7 @@ planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm
 pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
 
 
-occlusion_cfg:  # Boolean to determine whether occlusions should be enabled
+occlusion_cfg:  # Dict that governs occlusion behavior
   occlusion: false  # Boolean to determine whether occlusions should be enabled
   manager_type: "wedge"  # options: [range, shadow, wedge]
 
