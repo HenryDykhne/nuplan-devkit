@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
+from omegaconf import DictConfig
 
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.ego_state import EgoState
@@ -16,6 +17,7 @@ from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
+from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
 from nuplan.planning.simulation.controller.motion_model.abstract_motion_model import AbstractMotionModel
 from nuplan.planning.simulation.controller.tracker.abstract_tracker import AbstractTracker
 from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
@@ -26,7 +28,6 @@ from nuplan.planning.simulation.observation.mlpa.planner_config_constants import
                                                                                     PDM_HYBRID_AGENT_CONFIG, PDM_BATCH_IDM_CONFIG, \
                                                                                     PDM_OFFSET_MODEL_CONFIG
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks, Observation
-from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
 
@@ -48,7 +49,7 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusions: bool, planner_type: str, \
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusion_cfg: dict, planner_type: str, \
                  pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
@@ -61,7 +62,10 @@ class MLPlannerAgents(AbstractObservation):
         self.planner_type = planner_type
         self.pdm_hybrid_ckpt = pdm_hybrid_ckpt
         self._scenario = scenario
-        self._occlusions = occlusions
+
+        occlusion_cfg = DictConfig(occlusion_cfg)
+        self._occlusion = occlusion_cfg.occlusion
+        self._occlusion_cfg = occlusion_cfg
         self._ego_state_history: Dict = {}
         self._agents: Dict = None    
         self._trajectory_cache: Dict = {}
@@ -78,7 +82,7 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache = {}
         self._ego_state_history = {}
         self._static_agents = []
-        
+
     def _get_agents(self):
         """
         Gets dict of tracked agents, or lazily creates them it 
@@ -325,6 +329,7 @@ class MLPlannerAgents(AbstractObservation):
         """
 
         if self.planner_type == "ml":
+            assert self.model is not None, "Must provide model for ML planner."
             planner = MLPlanner(self.model)
         elif self.planner_type == "idm":
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
@@ -340,7 +345,7 @@ class MLPlannerAgents(AbstractObservation):
         return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                 'metadata': agent.metadata,
                 'planner': planner,
-                'occlusion': WedgeOcclusionManager(self._scenario) if self._occlusions else None}
+                'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """
