@@ -96,7 +96,6 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         """
         Fills out the latest uncloak window for the _noticed_agent_cache. agents that are noticed at a timestep will always be noticed at that timestep
         """
-        print(ego_state_buffer[-1].time_us)
         self._noticed_agent_cache[ego_state_buffer[-1].time_us] = set()
         notice_threshold_over_sample_interval = int(self.notice_threshold / sample_interval)
         time_us_at_begining_of_window = ego_state_buffer[0].time_us

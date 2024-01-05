@@ -103,6 +103,9 @@ class MLPlannerAgents(AbstractObservation):
                         self._static_agents.append(agent)
                         continue
 
+                    if self._irrelevant_to_ego(agent, self._scenario):
+                        continue
+
                     route_plan = self._get_roadblock_path(agent, goal)
 
                     if route_plan:
@@ -446,3 +449,21 @@ class MLPlannerAgents(AbstractObservation):
                 return True
             
         return False
+
+    def _irrelevant_to_ego(self, agent: Agent, scenario: AbstractScenario, relevance_distance_threshold=50):
+        """
+        Checks if an agent is irrelevant to ego.
+        """
+
+        ego_open_loop_trajectory = scenario.get_expert_ego_trajectory()
+
+        for index in range(scenario.get_number_of_iterations()):
+            tracks = scenario.get_tracked_objects_at_iteration(index)
+
+            for copy_agent in tracks.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
+                if agent.metadata.track_token == copy_agent.metadata.track_token:
+                    for ego_state in ego_open_loop_trajectory:
+                        if copy_agent.center.distance_to(ego_state.rear_axle) <= relevance_distance_threshold:
+                            return False
+
+        return True
