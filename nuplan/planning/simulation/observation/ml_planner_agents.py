@@ -103,12 +103,9 @@ class MLPlannerAgents(AbstractObservation):
                         self._static_agents.append(agent)
                         continue
 
-                    if self._irrelevant_to_ego(agent, self._scenario):
-                        continue
-
                     route_plan = self._get_roadblock_path(agent, goal)
 
-                    if route_plan:
+                    if not self._irrelevant_to_ego(agent, route_plan, self._scenario):
                         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
 
                         # Initialize planner.
@@ -338,6 +335,14 @@ class MLPlannerAgents(AbstractObservation):
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
         elif self.planner_type == "pdm_closed":
             planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
+        elif self.planner_type == "mixed":
+            planner_type = self._select_mixed_agent_type(agent) 
+            if planner_type == "idm":
+                planner = IDMPlanner(**IDM_AGENT_CONFIG)
+            if planner_type == "pdm_closed":
+                planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
+            else:
+                raise NotImplementedError(f"Got wrong planner type {planner_type}!")
         elif self.planner_type == "pdm_hybrid":
             assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
             planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG), \
@@ -450,20 +455,36 @@ class MLPlannerAgents(AbstractObservation):
             
         return False
 
-    def _irrelevant_to_ego(self, agent: Agent, scenario: AbstractScenario, relevance_distance_threshold=50):
+    def _irrelevant_to_ego(self, agent: Agent, route_plan: List[str], scenario: AbstractScenario):
         """
         Checks if an agent is irrelevant to ego.
         """
+        
+        if not route_plan:
+            return True
+        
+        ego_route_plan = set(scenario.get_route_roadblock_ids())
+        route_plan = set(route_plan)
 
-        ego_open_loop_trajectory = scenario.get_expert_ego_trajectory()
+        return len(ego_route_plan.intersection(route_plan)) == 0
+        
+
+    def _select_mixed_agent_type(self, agent: Agent, scenario: AbstractScenario, relevance_distance_threshold=30):
+        """
+        Selects a planner type for a mixed planner.
+        """
+
+        ego_state_at_start = scenario.get_ego_state_at_iteration(0)
+        
+        if abs(ego_state_at_start.rear_axle.heading - agent.center.heading) <= 0.2:
+            return "idm"
 
         for index in range(scenario.get_number_of_iterations()):
             tracks = scenario.get_tracked_objects_at_iteration(index)
+            ego_state = scenario.get_ego_state_at_iteration(index)
 
             for copy_agent in tracks.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
                 if agent.metadata.track_token == copy_agent.metadata.track_token:
-                    for ego_state in ego_open_loop_trajectory:
-                        if copy_agent.center.distance_to(ego_state.rear_axle) <= relevance_distance_threshold:
-                            return False
-
-        return True
+                    if copy_agent.center.distance_to(ego_state.rear_axle) <= relevance_distance_threshold:
+                        return "pdm_closed"
+        return "idm"
