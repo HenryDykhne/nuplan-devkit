@@ -336,10 +336,10 @@ class MLPlannerAgents(AbstractObservation):
         elif self.planner_type == "pdm_closed":
             planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
         elif self.planner_type == "mixed":
-            planner_type = self._select_mixed_agent_type(agent) 
+            planner_type = self._select_mixed_agent_type(agent, self._scenario) 
             if planner_type == "idm":
                 planner = IDMPlanner(**IDM_AGENT_CONFIG)
-            if planner_type == "pdm_closed":
+            elif planner_type == "pdm_closed":
                 planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
             else:
                 raise NotImplementedError(f"Got wrong planner type {planner_type}!")
