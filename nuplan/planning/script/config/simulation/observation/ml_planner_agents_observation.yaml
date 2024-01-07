@@ -11,6 +11,19 @@ occlusion_cfg:  # Dict that governs occlusion behavior
   occlusion: false  # Boolean to determine whether occlusions should be enabled
   manager_type: "wedge"  # options: [range, shadow, wedge]
 
+
+optimization_cfg:  # Dict that governs scenario optimizations
+  route_plan_culling: true  # Boolean to determine whether to cull agents who's route does not intersect with ego's route
+
+  mixed_agent_heading_check: true # Boolean to determine whether, if mixed agents are enabled, to make idm agents who's heading is not within a certain range of ego's heading
+  mixed_agent_heading_check_range: 0.2 # Float to determine the range of heading difference (radians) between ego and idm agents
+  mixed_agent_relevance_distance: 30.0 # Float to determine whether, if mixed agents are enabled, to how far an agent must be from ego to be made idm
+
+  parked_car_threshold: 1.  # Float to determine the maxmimum distance for a vehicle in a carpark to be considered parked
+
+  subsample_inference_frequency: 0.2  # Float to determine the rate subsampled agents should performance planning at
+  subsample_full_inference_distance: 30.0  # Float to determine the minimum distance from ego at which agents should be subsampled
+
 # These defaults are taken from two_stage_controller.yaml
 tracker: 
   _target_: nuplan.planning.simulation.controller.tracker.lqr.LQRTracker
