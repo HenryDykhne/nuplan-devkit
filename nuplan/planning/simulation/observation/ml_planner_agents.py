@@ -306,8 +306,12 @@ class MLPlannerAgents(AbstractObservation):
     def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint_record: TimePoint):
         """
         Adds agent to the scene with a given goal during the simulation runtime.
+        Gets dict of tracked agents, or lazily creates them it 
+        from vehicles at simulation start if it does not exist.
         """
 
+        self._agents = self._get_agents() #this action is idempotent
+            
         route_plan = self._get_roadblock_path(agent, goal)
 
         if route_plan:

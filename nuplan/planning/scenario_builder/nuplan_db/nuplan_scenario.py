@@ -121,6 +121,7 @@ class NuPlanScenario(AbstractScenario):
         # So, we must check and download the file here as well.
         self._log_file = download_file_if_necessary(self._data_root, self._log_file_load_path)
         self._log_name: str = absolute_path_to_log_name(self._log_file)
+        self.modifier = ""
 
     def __reduce__(self) -> Tuple[Type[NuPlanScenario], Tuple[Any, ...]]:
         """
@@ -190,7 +191,7 @@ class NuPlanScenario(AbstractScenario):
     @property
     def scenario_name(self) -> str:
         """Inherited, see superclass."""
-        return self.token
+        return self.token + self.modifier
 
     @property
     def scenario_type(self) -> str:
