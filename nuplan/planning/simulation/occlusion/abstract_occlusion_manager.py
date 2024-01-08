@@ -59,7 +59,6 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
             if ego_state.time_us not in self._visible_agent_cache:
                 self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
 
-        current_time_seconds = ego_state_buffer[-1].time_seconds
         assert len(ego_state_buffer) * input_buffer.sample_interval >= self.uncloak_reaction_time, "SimulationHistoryBuffer must be at least as long as uncloak reaction time."
         for i, (ego_state, observations) in enumerate(zip(ego_state_buffer, observations_buffer)):#we loop through to find the first timestep inside the uncloak_reaction_time
             if ego_state.time_us not in self._noticed_agent_cache: #we only enter here at the begining of the simulation to determine the noticed cache of the history
@@ -70,11 +69,6 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                                                     deque(itertools.islice(observations_buffer, j, i + 1))) #this is only run once per state not in the noticed_agents_cache
                         break   
                 self._historical_noticed_agent_cache[ego_state.time_us] = copy.deepcopy(self._noticed_agent_cache[ego_state.time_us])
-            elif current_time_seconds - ego_state.time_seconds <= self.uncloak_reaction_time: #this for loop only exists to find the right index
-                self._compute_noticed_agents(input_buffer.sample_interval, 
-                                            deque(itertools.islice(ego_state_buffer, i, None)), 
-                                            deque(itertools.islice(observations_buffer, i, None))) #this only gets run once since it breaks out of the loop immedietly afterwards
-                break
 
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
                             deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
@@ -110,6 +104,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                     for ego_state in ego_state_buffer:
                         if ego_state.time_us not in self._noticed_agent_cache:
                             self._noticed_agent_cache[ego_state.time_us] = set()
+                            print('this should probably never happen')
                         self._noticed_agent_cache[ego_state.time_us].add(token)
     ####################################################################################################################################   
 
