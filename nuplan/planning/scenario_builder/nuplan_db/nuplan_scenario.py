@@ -68,6 +68,7 @@ class NuPlanScenario(AbstractScenario):
         scenario_extraction_info: Optional[ScenarioExtractionInfo],
         ego_vehicle_parameters: VehicleParameters,
         sensor_root: Optional[str] = None,
+        modifier: Optional[str] = "",
     ) -> None:
         """
         Initialize the nuPlan scenario.
@@ -121,7 +122,7 @@ class NuPlanScenario(AbstractScenario):
         # So, we must check and download the file here as well.
         self._log_file = download_file_if_necessary(self._data_root, self._log_file_load_path)
         self._log_name: str = absolute_path_to_log_name(self._log_file)
-        self.modifier = ""
+        self._modifier = modifier
 
     def __reduce__(self) -> Tuple[Type[NuPlanScenario], Tuple[Any, ...]]:
         """
@@ -142,6 +143,7 @@ class NuPlanScenario(AbstractScenario):
                 self._scenario_extraction_info,
                 self._ego_vehicle_parameters,
                 self._sensor_root,
+                self._modifier
             ),
         )
 
@@ -191,7 +193,7 @@ class NuPlanScenario(AbstractScenario):
     @property
     def scenario_name(self) -> str:
         """Inherited, see superclass."""
-        return self.token + self.modifier
+        return self.token + self._modifier
 
     @property
     def scenario_type(self) -> str:

@@ -23,10 +23,6 @@ def run_simulation(sim_runner: AbstractRunner, exit_on_failure: bool = False) ->
     """
     # Store start time so that if the simulations fail, we know how long they ran for
     start_time = time.perf_counter()
-    print('hihihi')
-    print(sim_runner.scenario.modifier)
-    print(sim_runner)
-    print('a', sim_runner.scenario.scenario_name)
     try:
         return sim_runner.run()
     except Exception as e:
@@ -85,22 +81,10 @@ def execute_runners(
     number_of_sims = len(runners)
     logger.info(f"Starting {number_of_sims} simulations using {worker.__class__.__name__}!")
     
-    for runner in runners:
-        print('hohoho')
-        print(runner.scenario.modifier)
-        print(runner)
-        print('e', runner.scenario.scenario_name)
-        
-    #run_simulation(runners[0], exit_on_failure) this if you just want to run one without ray.map
-    
         
     reports: List[RunnerReport] = worker.map(
         Task(fn=run_simulation, num_gpus=num_gpus, num_cpus=num_cpus), runners, exit_on_failure, verbose=verbose
     )
-    reports = []
-    print(len(reports))
-    for report in reports:
-        print(report.scenario_name, report.planner_name, report.log_name)
     # Store the results in a dictionary so we can easily store error tracebacks in the next step, if needed
     results: Dict[Tuple[str, str, str], RunnerReport] = {
         (report.scenario_name, report.planner_name, report.log_name): report for report in reports

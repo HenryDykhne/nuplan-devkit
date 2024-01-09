@@ -8,6 +8,7 @@ from nuplan.planning.simulation.callback.abstract_callback import AbstractCallba
 from nuplan.planning.simulation.callback.multi_callback import MultiCallback
 from nuplan.planning.simulation.history.simulation_history import SimulationHistory, SimulationHistorySample
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
+from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.simulation_setup import SimulationSetup
 from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
@@ -26,6 +27,7 @@ class Simulation:
         simulation_setup: SimulationSetup,
         callback: Optional[AbstractCallback] = None,
         simulation_history_buffer_duration: float = 2,
+        modified_observations: Optional[AbstractObservation] = None,
     ):
         """
         Create Simulation.
@@ -44,7 +46,7 @@ class Simulation:
         # Proxy
         self._time_controller = simulation_setup.time_controller
         self._ego_controller = simulation_setup.ego_controller
-        self._observations = simulation_setup.observations
+        self._observations = modified_observations if (modified_observations is not None) else simulation_setup.observations
         self._occlusion_manager = simulation_setup.occlusion_manager
         self._scenario = simulation_setup.scenario
         self._callback = MultiCallback([]) if callback is None else callback
@@ -70,7 +72,7 @@ class Simulation:
         Hints on how to reconstruct the object when pickling.
         :return: Object type and constructor arguments to be used.
         """
-        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration)
+        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration, self._observations)
 
     def is_simulation_running(self) -> bool:
         """

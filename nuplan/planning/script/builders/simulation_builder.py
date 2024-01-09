@@ -152,8 +152,5 @@ def build_simulations(
                 offshoot_scenario_simulations.extend(modifier.modify_scenario(simulation))
         simulations = offshoot_scenario_simulations
         logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
-    for simulation in simulations:
-        print('c')
-        print(simulation.scenario.scenario_name)
     logger.info('Building simulations...DONE!')
     return simulations
