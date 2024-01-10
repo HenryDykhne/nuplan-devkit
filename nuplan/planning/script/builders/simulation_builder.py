@@ -27,6 +27,8 @@ from nuplan.planning.simulation.simulation_time_controller.abstract_simulation_t
 )
 from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
 
+from nuplan.planning.script.builders.scenario_modifier_builder import build_scenario_modifiers
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,6 +140,17 @@ def build_simulations(
                 simulation_history_buffer_duration=cfg.simulation_history_buffer_duration,
             )
             simulations.append(SimulationRunner(simulation, planner))
-
+            
+    # here we need to convert those simulations to our special scenarios
+    if 'modify_scenario_simulations' in cfg and cfg.modify_scenario_simulations:
+        offshoot_scenario_simulations = []
+        scenario_modifiers = build_scenario_modifiers(cfg.modifier_types)
+        logger.info('Modyfing Scenarios...')
+        original_num_runners = len(simulations)
+        for simulation in simulations:
+            for modifier in scenario_modifiers:
+                offshoot_scenario_simulations.extend(modifier.modify_scenario(simulation))
+        simulations = offshoot_scenario_simulations
+        logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
     logger.info('Building simulations...DONE!')
     return simulations

@@ -80,6 +80,8 @@ def execute_runners(
     # Start simulations
     number_of_sims = len(runners)
     logger.info(f"Starting {number_of_sims} simulations using {worker.__class__.__name__}!")
+    
+        
     reports: List[RunnerReport] = worker.map(
         Task(fn=run_simulation, num_gpus=num_gpus, num_cpus=num_cpus), runners, exit_on_failure, verbose=verbose
     )

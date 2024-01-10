@@ -106,7 +106,6 @@ def run_simulation(cfg: DictConfig, planners: Optional[Union[AbstractPlanner, Li
         pre_built_planners=planners,
         callbacks_worker=callbacks_worker_pool,
     )
-
     if common_builder.profiler:
         # Stop simulation construction profiling
         common_builder.profiler.save_profiler(profiler_name)
