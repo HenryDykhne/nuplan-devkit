@@ -35,7 +35,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         self.scenario = scenario
         self.uncloak_reaction_time = uncloak_reaction_time 
         self.notice_threshold = notice_threshold 
-        self.original_time_us = math.inf
+        self.original_time_us = self.scenario.get_time_point(0).time_us
 
     def reset(self) -> None:
         """
@@ -44,7 +44,6 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         self._visible_agent_cache = {}
         self._noticed_agent_cache = {} 
         self._historical_noticed_agent_cache = {} # this exists because the display needs the noticed values at the time they were initially computed and they can change with subsequent occlusions
-        self.original_time_us = math.inf
         
     def occlude_input(self, input_buffer: SimulationHistoryBuffer) -> SimulationHistoryBuffer:
         """
@@ -73,7 +72,6 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
 
         current_time_us = ego_state_buffer[-1].time_us
         #this block corrects the notice status for inserted vehicles since they have no history. if they are visible on the first frame, we assume they have been noticed and visible for all previous frames in the historybuffer
-        self.original_time_us = min(current_time_us, self.original_time_us)
         if current_time_us == self.original_time_us:
             for agent in observations_buffer[-1].tracked_objects.tracked_objects:
                 token = agent.metadata.track_token

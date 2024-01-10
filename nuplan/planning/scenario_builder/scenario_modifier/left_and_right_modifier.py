@@ -35,7 +35,7 @@ class LeftAndRightModifier(AbstractScenarioModifier):
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(StateSE2(scenario.initial_ego_state.center.x - 4, scenario.initial_ego_state.center.y, angle), 5, 2, 2),
             velocity=StateVector2D(scenario.initial_ego_state.agent._velocity.x, scenario.initial_ego_state.agent._velocity.y),
-            metadata=SceneObjectMetadata(iter, "inserted_left", -2, "inserted_left"),
+            metadata=SceneObjectMetadata(scenario.get_time_point(0).time_us, "inserted_left", -2, "inserted_left"),
             angular_velocity=0.0,
         )
 
@@ -55,7 +55,7 @@ class LeftAndRightModifier(AbstractScenarioModifier):
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(StateSE2(scenario.initial_ego_state.center.x + 4, scenario.initial_ego_state.center.y, angle), 5, 2, 2),
             velocity=StateVector2D(scenario.initial_ego_state.agent._velocity.x, scenario.initial_ego_state.agent._velocity.y),
-            metadata=SceneObjectMetadata(iter, "inserted_right", -2, "inserted_right"),
+            metadata=SceneObjectMetadata(scenario.get_time_point(0).time_us, "inserted_right", -2, "inserted_right"),
             angular_velocity=0.0,
         )
 
