@@ -15,6 +15,7 @@ occlusion_cfg:  # Dict that governs occlusion behavior
 optimization_cfg:  # Dict that governs scenario optimizations
   route_plan_culling: true  # Boolean to determine whether to cull agents who's route does not intersect with ego's route
 
+  mixed_agents: true  # Boolean to determine whether to make certain agents IDM for perfosrmance reasons
   mixed_agent_heading_check: true # Boolean to determine whether, if mixed agents are enabled, to make idm agents who's heading is not within a certain range of ego's heading
   mixed_agent_heading_check_range: 0.2 # Float to determine the range of heading difference (radians) between ego and idm agents
   mixed_agent_relevance_distance: 30.0 # Float to determine whether, if mixed agents are enabled, to how far an agent must be from ego to be made idm

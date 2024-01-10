@@ -325,23 +325,19 @@ class MLPlannerAgents(AbstractObservation):
         This is propagated through the simulation.
         """
 
-        if self.planner_type == "ml":
+        if self._optimization_cfg.mixed_agents:
+            selected_planner_type = self._select_mixed_agent_type(agent, self._scenario) 
+        else:
+            selected_planner_type = self.planner_type
+
+        if selected_planner_type == "ml":
             assert self.model is not None, "Must provide model for ML planner."
             planner = MLPlanner(self.model)
-        elif self.planner_type == "idm":
+        elif selected_planner_type == "idm":
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
-        elif self.planner_type == "pdm_closed":
+        elif selected_planner_type == "pdm_closed":
             planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
-        elif self.planner_type == "mixed":
-            planner_type = self._select_mixed_agent_type(agent, self._scenario) 
-            print(planner_type)
-            if planner_type == "idm":
-                planner = IDMPlanner(**IDM_AGENT_CONFIG)
-            elif planner_type == "pdm_closed":
-                planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
-            else:
-                raise NotImplementedError(f"Got wrong planner type {planner_type}!")
-        elif self.planner_type == "pdm_hybrid":
+        elif selected_planner_type == "pdm_hybrid":
             assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
             planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG), \
                                        **PDM_HYBRID_AGENT_CONFIG, model= PDMOffsetModel(**PDM_OFFSET_MODEL_CONFIG), checkpoint_path=self.pdm_hybrid_ckpt)
@@ -488,5 +484,5 @@ class MLPlannerAgents(AbstractObservation):
             for copy_agent in tracks.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
                 if agent.metadata.track_token == copy_agent.metadata.track_token:
                     if copy_agent.center.distance_to(ego_state.rear_axle) <= self._optimization_cfg.mixed_agent_relevance_distance:
-                        return "pdm_closed"
+                        return self.planner_type
         return "idm"
