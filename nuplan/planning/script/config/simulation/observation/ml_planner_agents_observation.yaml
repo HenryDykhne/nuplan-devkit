@@ -19,7 +19,7 @@ optimization_cfg:  # Dict that governs scenario optimizations
   mixed_agent_heading_check_range: 0.2 # Float to determine the range of heading difference (radians) between ego and idm agents
   mixed_agent_relevance_distance: 30.0 # Float to determine whether, if mixed agents are enabled, to how far an agent must be from ego to be made idm
 
-  parked_car_threshold: 1.  # Float to determine the maxmimum distance for a vehicle in a carpark to be considered parked
+  parked_car_threshold: 1.  # Float to determine the maxmimum traveled distance in the ground truth playback for a vehicle in a carpark to be considered parked
 
   subsample_inference_frequency: 0.2  # Float to determine the rate subsampled agents should performance planning at
   subsample_full_inference_distance: 30.0  # Float to determine the minimum distance from ego at which agents should be subsampled
