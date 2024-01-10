@@ -49,7 +49,7 @@ class MLPlannerAgents(AbstractObservation):
     Simulate agents based on an ML model.
     """
 
-    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusion_cfg: dict, planner_type: str, \
+    def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusion_cfg: dict, optimization_cfg: dict, planner_type: str, \
                  pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
         """
         Initializes the MLPlannerAgents class.
@@ -63,14 +63,11 @@ class MLPlannerAgents(AbstractObservation):
         self.pdm_hybrid_ckpt = pdm_hybrid_ckpt
         self._scenario = scenario
 
-        occlusion_cfg = DictConfig(occlusion_cfg)
-        self._occlusion = occlusion_cfg.occlusion
-        self._occlusion_cfg = occlusion_cfg
+        self._occlusion_cfg = DictConfig(occlusion_cfg)
+        self._optimization_cfg = DictConfig(optimization_cfg)
         self._ego_state_history: Dict = {}
         self._agents: Dict = None    
         self._trajectory_cache: Dict = {}
-        self._inference_frequency: float = 0.2
-        self._full_inference_distance: float = 30
         self._static_agents: List[Agent] = []
 
         self._motion_controller = TwoStageController(scenario, tracker, motion_model)
@@ -105,7 +102,7 @@ class MLPlannerAgents(AbstractObservation):
 
                     route_plan = self._get_roadblock_path(agent, goal)
 
-                    if route_plan:
+                    if not self._irrelevant_to_ego(route_plan, self._scenario):
                         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
 
                         # Initialize planner.
@@ -163,9 +160,9 @@ class MLPlannerAgents(AbstractObservation):
         # TODO: Find way to parallelize.
         for agent_token, agent_data in self._agents.items():
             if agent_token in self._trajectory_cache and \
-                (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._inference_frequency and \
+                (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._optimization_cfg.subsample_inference_frequency and \
             (((agent_data['ego_state'].center.x - history.current_state[0].center.x) ** 2 + \
-                (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._full_inference_distance:
+                (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._optimization_cfg.subsample_full_inference_distance:
                      trajectory = self._trajectory_cache[agent_token][1]
             else:
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
@@ -328,14 +325,19 @@ class MLPlannerAgents(AbstractObservation):
         This is propagated through the simulation.
         """
 
-        if self.planner_type == "ml":
+        if self._optimization_cfg.mixed_agents:
+            selected_planner_type = self._select_mixed_agent_type(agent, self._scenario) 
+        else:
+            selected_planner_type = self.planner_type
+
+        if selected_planner_type == "ml":
             assert self.model is not None, "Must provide model for ML planner."
             planner = MLPlanner(self.model)
-        elif self.planner_type == "idm":
+        elif selected_planner_type == "idm":
             planner = IDMPlanner(**IDM_AGENT_CONFIG)
-        elif self.planner_type == "pdm_closed":
+        elif selected_planner_type == "pdm_closed":
             planner = PDMClosedPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG))
-        elif self.planner_type == "pdm_hybrid":
+        elif selected_planner_type == "pdm_hybrid":
             assert self.pdm_hybrid_ckpt, "Must provide checkpoint path for PDM hybrid planner."
             planner = PDMHybridPlanner(**PDM_CLOSED_AGENT_CONFIG, idm_policies=BatchIDMPolicy(**PDM_BATCH_IDM_CONFIG), \
                                        **PDM_HYBRID_AGENT_CONFIG, model= PDMOffsetModel(**PDM_OFFSET_MODEL_CONFIG), checkpoint_path=self.pdm_hybrid_ckpt)
@@ -345,7 +347,7 @@ class MLPlannerAgents(AbstractObservation):
         return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
                 'metadata': agent.metadata,
                 'planner': planner,
-                'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion else None}
+                'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion_cfg.occlusion else None}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """
@@ -436,13 +438,51 @@ class MLPlannerAgents(AbstractObservation):
         progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
         return closest_segment, progress
 
-    def _is_parked_vehicle(self, agent: Agent, goal: StateSE2, map_api: AbstractMap, max_displacement: float = 1.0):
+    def _is_parked_vehicle(self, agent: Agent, goal: StateSE2, map_api: AbstractMap):
         """
         Checks if an agent is a parked vehicle.
         """
 
         if map_api.is_in_layer(agent.center, SemanticMapLayer.CARPARK_AREA):
-            if goal.distance_to(agent.center) < max_displacement:
+            if goal.distance_to(agent.center) < self._optimization_cfg.parked_car_threshold:
                 return True
             
         return False
+
+    def _irrelevant_to_ego(self, route_plan: List[str], scenario: AbstractScenario):
+        """
+        Checks if an agent is irrelevant to ego.
+        """
+        
+        if not route_plan:
+            return True
+        
+        if not self._optimization_cfg.route_plan_culling:
+            return False
+        
+        ego_route_plan = set(scenario.get_route_roadblock_ids())
+        route_plan = set(route_plan)
+
+        return len(ego_route_plan.intersection(route_plan)) == 0
+        
+
+    def _select_mixed_agent_type(self, agent: Agent, scenario: AbstractScenario):
+        """
+        Selects a planner type for a mixed planner.
+        """
+
+        ego_state_at_start = scenario.get_ego_state_at_iteration(0)
+        
+        if self._optimization_cfg.mixed_agent_heading_check:
+            if abs(ego_state_at_start.rear_axle.heading - agent.center.heading) <= self._optimization_cfg.mixed_agent_heading_check_range:
+                return "idm"
+
+        for index in range(scenario.get_number_of_iterations()):
+            tracks = scenario.get_tracked_objects_at_iteration(index)
+            ego_state = scenario.get_ego_state_at_iteration(index)
+
+            for copy_agent in tracks.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
+                if agent.metadata.track_token == copy_agent.metadata.track_token:
+                    if copy_agent.center.distance_to(ego_state.rear_axle) <= self._optimization_cfg.mixed_agent_relevance_distance:
+                        return self.planner_type
+        return "idm"
