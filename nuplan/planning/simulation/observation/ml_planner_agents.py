@@ -309,6 +309,7 @@ class MLPlannerAgents(AbstractObservation):
         Gets dict of tracked agents, or lazily creates them it 
         from vehicles at simulation start if it does not exist.
         """
+        assert 'inserted' in agent.metadata.track_token
 
         self._agents = self._get_agents() #this action is idempotent
             

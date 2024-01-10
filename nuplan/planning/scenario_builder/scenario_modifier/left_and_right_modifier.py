@@ -28,20 +28,20 @@ class LeftAndRightModifier(AbstractScenarioModifier):
         right = copy.deepcopy(runner)
         
         scenario = runner.scenario
-        
+        iter = runner.simulation._time_controller.get_iteration()
         
         angle = scenario.initial_ego_state.center.heading
         inserted_agent = Agent(
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(StateSE2(scenario.initial_ego_state.center.x - 4, scenario.initial_ego_state.center.y, angle), 5, 2, 2),
             velocity=StateVector2D(scenario.initial_ego_state.agent._velocity.x, scenario.initial_ego_state.agent._velocity.y),
-            metadata=SceneObjectMetadata(1623707858950113, "inserted_left", -2, "inserted_left"),
+            metadata=SceneObjectMetadata(iter, "inserted_left", -2, "inserted_left"),
             angular_velocity=0.0,
         )
 
         inserted_goal = StateSE2(scenario.initial_ego_state.center.x, scenario.initial_ego_state.center.y, 1.25)
         
-        iter = runner.simulation._time_controller.get_iteration()
+        
         left.simulation._observations.add_agent_to_scene(
             inserted_agent, inserted_goal, iter.time_point
         )
@@ -55,13 +55,12 @@ class LeftAndRightModifier(AbstractScenarioModifier):
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(StateSE2(scenario.initial_ego_state.center.x + 4, scenario.initial_ego_state.center.y, angle), 5, 2, 2),
             velocity=StateVector2D(scenario.initial_ego_state.agent._velocity.x, scenario.initial_ego_state.agent._velocity.y),
-            metadata=SceneObjectMetadata(1623707858950113, "inserted_right", -2, "inserted_right"),
+            metadata=SceneObjectMetadata(iter, "inserted_right", -2, "inserted_right"),
             angular_velocity=0.0,
         )
 
         inserted_goal = StateSE2(scenario.initial_ego_state.center.x, scenario.initial_ego_state.center.y, 1.25)
         
-        iter = runner.simulation._time_controller.get_iteration()
         right.simulation._observations.add_agent_to_scene(
             inserted_agent, inserted_goal, iter.time_point
         )

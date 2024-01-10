@@ -118,7 +118,6 @@ def execute_runners(
     failed_simulations = str()
     number_of_successful = 0
     runner_reports: List[RunnerReport] = list(results.values())
-    print(len(runner_reports))
     for result in runner_reports:
         if result.succeeded:
             number_of_successful += 1
