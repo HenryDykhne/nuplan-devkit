@@ -91,7 +91,7 @@ class MLPlannerAgents(AbstractObservation):
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
                 # Sets agent goal to be it's last known point in the simulation. 
-                goal = MLPlannerAgents._get_historical_agent_goal(agent, self.current_iteration, self._scenario)
+                goal = self._get_historical_agent_goal(agent, self.current_iteration)
 
 
                 if goal:
@@ -100,7 +100,7 @@ class MLPlannerAgents(AbstractObservation):
                         self._static_agents.append(agent)
                         continue
 
-                    route_plan = MLPlannerAgents.get_roadblock_path(agent, goal, self._scenario)
+                    route_plan = self._get_roadblock_path(agent, goal)
 
                     if not self._irrelevant_to_ego(route_plan, self._scenario):
                         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
@@ -310,7 +310,7 @@ class MLPlannerAgents(AbstractObservation):
 
         self._agents = self._get_agents() #this action is idempotent
             
-        route_plan = MLPlannerAgents.get_roadblock_path(agent, goal, self._scenario)
+        route_plan = self._get_roadblock_path(agent, goal)
 
         if route_plan:
             self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
@@ -354,26 +354,26 @@ class MLPlannerAgents(AbstractObservation):
                 'planner': planner,
                 'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion_cfg.occlusion else None}
     
-    def _get_historical_agent_goal(agent: Agent, iteration_index: int, scenario: AbstractScenario):
+    def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """
         Gets the last known state of an agent and returns it.
         """
 
-        for frame in range(scenario.get_number_of_iterations()-1, iteration_index, -1):
-            last_scenario_frame = scenario.get_tracked_objects_at_iteration(frame)
+        for frame in range(self._scenario.get_number_of_iterations()-1, iteration_index, -1):
+            last_scenario_frame = self._scenario.get_tracked_objects_at_iteration(frame)
             for track in last_scenario_frame.tracked_objects.tracked_objects:
                 if track.metadata.track_token == agent.metadata.track_token:
                     return track.center
 
         return None
     
-    def get_roadblock_path(agent: Agent, goal: StateSE2, scenario: AbstractScenario, max_depth: int = 10):
+    def _get_roadblock_path(self, agent: Agent, goal: StateSE2, max_depth: int = 10):
         """
         Gets a path from the agent's current position to a goal position using a max depth BFS.
         """
 
-        start_edge, _ = MLPlannerAgents._get_target_state_segment(agent.center, scenario.map_api)
-        end_edge, _ = MLPlannerAgents._get_target_state_segment(goal, scenario.map_api)
+        start_edge, _ = self._get_target_state_segment(agent.center, self._scenario.map_api)
+        end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
 
         if start_edge is None:
             return None
@@ -384,7 +384,7 @@ class MLPlannerAgents(AbstractObservation):
         else:
             route_plan = [start_edge]
 
-        route_plan = MLPlannerAgents._extend_path(route_plan, max_depth)        
+        route_plan = self._extend_path(route_plan, max_depth)       
         route_plan = [edge.get_roadblock_id() for edge in route_plan]
         route_plan = list(dict.fromkeys(route_plan))
         
@@ -393,7 +393,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
     
-    def _extend_path(route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
+    def _extend_path(self, route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
         """
         Extends a route plan to a given depth by continually going forward.
         """
@@ -412,7 +412,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
 
-    def _get_target_state_segment(target_state: StateSE2, map_api: AbstractMap
+    def _get_target_state_segment(self, target_state: StateSE2, map_api: AbstractMap
     ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
         """
         Gets the map object that the target state is on and the progress along the segment.
