@@ -20,8 +20,8 @@ class LeftAndRightModifier(AbstractScenarioModifier):
         
     def modify_scenario(self, runner: SimulationRunner) -> List[SimulationRunner]:
         """We convert one abstract scenario into many abstract scenarios by modifying the scenario in some way.
-        :param scenario: a scenario
-        :return: we return a list of scenarios that are modified versions of the input scenario
+        :param runner: a scenario
+        :return: we return a list of runners that are modified versions of the input scenario
         """
         modified_simulation_runners = []
         left = copy.deepcopy(runner)
