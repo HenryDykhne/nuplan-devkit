@@ -43,7 +43,7 @@ class LeftAndRightModifier(AbstractScenarioModifier):
         
         
         left.simulation._observations.add_agent_to_scene(
-            inserted_agent, inserted_goal, iter.time_point, runner.simulation
+            inserted_agent, inserted_goal, iter.time_point, left.simulation
         )
         
         left.scenario._modifier = "left"
@@ -62,7 +62,7 @@ class LeftAndRightModifier(AbstractScenarioModifier):
         inserted_goal = StateSE2(scenario.initial_ego_state.center.x, scenario.initial_ego_state.center.y, 1.25)
         
         right.simulation._observations.add_agent_to_scene(
-            inserted_agent, inserted_goal, iter.time_point, runner.simulation
+            inserted_agent, inserted_goal, iter.time_point, right.simulation
         )
         
         right.scenario._modifier = "right"
