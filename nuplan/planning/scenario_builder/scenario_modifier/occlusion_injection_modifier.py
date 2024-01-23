@@ -4,6 +4,7 @@ from typing import Dict, List, Set, Tuple, Union
 
 import copy
 
+import math
 import numpy as np
 from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, LineString, MultiPoint
 from shapely import union_all
@@ -16,7 +17,7 @@ from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStat
 from nuplan.database.nuplan_db_orm.traffic_light_status import TrafficLightStatus
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
-from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractScenarioModifier
+from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
 from nuplan.planning.simulation.observation.ml_planner_agents import MLPlannerAgents
 
 from nuplan.common.actor_state.agent import Agent
@@ -26,22 +27,27 @@ from nuplan.common.actor_state.state_representation import Point2D, StateSE2, St
 
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 
+from nuplan.common.maps.nuplan_map.utils import cut_piece
 
-
-import math
 
 from nuplan.planning.simulation.runner.simulations_runner import SimulationRunner
+from nuplan.planning.simulation.simulation import Simulation
 class OcclusionInjectionModifier(AbstractScenarioModifier):
     DISTANCE_BETWEEN_DISCRETIZED_POINTS = 0.5
     TOLERANCE = 0.2
     MAP_RADIUS = 200.0
     SAMPLE_SPAWN_POINT_STDEV = 0.20
     ADD_NOISE = True
-    MINIMUM_SPAWNING_DISTANCE = 0.2 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
+    MINIMUM_SPAWNING_DISTANCE = 0.5 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
     MIN_DISTANCE_BETWEEN_INJECTIONS = 0.3
-    LEAD_FOLLOW_AGENT_RANGE = 15.0
+    LEAD_FOLLOW_AGENT_RANGE = 20.0 #agents we copy the speed and goal from that we are leading or following
+    SIDE_AGENT_RANGE = 10.0 #agents we check exist in case we cant find a goal from leading and following agents, just to make sure there is something that could be worth occluding in a lane beside us
     EXTENSION_STEPS = 3
     TIME_TO_END_OF_SEGMENT = 2.0 #seconds
+    RELAVANT_PLAN_DEPTH = 3
+    UPPER_CUT = 0.95
+    LOWER_CUT = 0.30
+    DEFAULT_SPEED_LIMIT_MPS = 15.0 #equates to roughly 54kph
     
     def __init__(self):
         super().__init__() #maybe we will need this later
@@ -53,20 +59,24 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         :return: we return a list of runners that are modified versions of the input scenario
         """
         scenario = runner.scenario
-        relavant_agent_tokens = self.find_relavant_agents(runner.simulation._observations, scenario)
-        
+        traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
+        relavant_agent_tokens = self.find_relavant_agents(runner.simulation._observations, scenario, traffic_light_status)
+        print('Number of relavant agent tokens', len(relavant_agent_tokens))
         # here we generate the field of view polygons for each relavant agent, taking into account potential occlusions even from nonrelavant agents
         ego_object = scenario.get_ego_state_at_iteration(0)
         ego_agent = ego_object.agent
         object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
         agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
         
+        if len(agents) == 0:
+            print('No initial tracked agents in scenario', scenario.token)
+            return []
+
         full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
-                
+
         if full_fov_poly.area == 0:
             return []
-        
-        traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
+
         centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
         
         potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
@@ -83,7 +93,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         
         objects_to_avoid = list(AGENT_TYPES | STATIC_OBJECT_TYPES) #grab anything we could crash into
         avoid = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(objects_to_avoid)
-        avoid_geoms = []
+        avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
         for obj in avoid:
             avoid_geoms.append(obj.box.geometry)
         avoid_geoms = MultiPolygon(avoid_geoms)
@@ -99,14 +109,14 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         modifier_number = 0
         #check which vehicles are currently visible to the ego vehicle
         manager = WedgeOcclusionManager(scenario)
-        print(len(runner.simulation._observations._agents))
         visible_relavant_agents = set(relavant_agent_tokens).intersection(
-            manager._compute_visible_agents(ego_object, runner.simulation._observations)
+            manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
         )
         points_injected_at = MultiPoint()
-        iter = runner.simulation._time_controller.get_iteration()
+        iteration = runner.simulation._time_controller.get_iteration()
         for point in candidate_occluding_spawn_points:
             # check if the point is too close to other injection sites
+            
             dist = points_injected_at.distance(point)
             if not math.isnan(dist) and dist < self.MIN_DISTANCE_BETWEEN_INJECTIONS:
                 continue
@@ -116,25 +126,31 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             if candidate is None:
                 continue
             
-            inject_poly = Polygon(candidate.box.all_corners)
-            if inject_poly.intersect(avoid_geoms): #if injected intersects with other agents
+            inject_poly = Polygon(candidate.box.all_corners())
+            if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
                 continue
             
-            self.inject_candidate(candidate, goal, runner, iter.time_point)
+            self.inject_candidate(candidate, goal, runner, iteration.time_point)
             
             # check if new occlusion is created among relavant vehicles
             new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                manager._compute_visible_agents(ego_object, runner.simulation._observations)
+                manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
             )
+            
+            # remove injected vehicle from original scenario
+            self.remove_candidate(candidate, runner)
+            
             if len(visible_relavant_agents.difference(new_visible_relavant_agents)) > 0:
                 new_sim_runner = copy.deepcopy(runner)
-                new_sim_runner.scenario._modifier = modifier_string + str(modifier_number)
+                modification = OcclusionInjectionModification(candidate, goal, iteration.time_point, modifier_string + str(modifier_number))
+                modification.modify(new_sim_runner.simulation)
+                new_sim_runner.simulation.modification = modification
+
                 modified_simulation_runners.append(new_sim_runner)
                 points_injected_at = points_injected_at.union(point)
                 modifier_number += 1
-                
-            # remove injected vehicle from original scenario
-            self.remove_candidate(candidate, runner)
+
+            
                 
         return modified_simulation_runners
     
@@ -157,6 +173,8 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         if not segments:
             return None, None #failed to inject agent
         
+        segments = [segment for segment in segments if segment.id not in traffic_light_status[TrafficLightStatusType.RED]]
+        
         distance = [
             segment.baseline_path.get_nearest_pose_from_position(point2d).distance_to(point2d)
             for segment in segments
@@ -165,52 +183,79 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         heading = closest_segment.baseline_path.get_nearest_pose_from_position(point2d).heading
         
         speed_setter_catch = closest_segment.polygon
-        for segment in (closest_segment.incoming_edges + closest_segment.outgoing_edges):
+        for segment in closest_segment.outgoing_edges:
             speed_setter_catch = speed_setter_catch.union(segment.polygon)
         
-        moving_agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(AGENT_TYPES)
+        # we dont want to spawn directly behind ego since even though it might cause an occlusion, such an occlusion is unlikely to result in a collision for ego    
+        ego_agent = scenario.initial_ego_state.agent
+        ego_center = Point(ego_agent.center.x, ego_agent.center.y)
+        if closest_segment.polygon.contains(ego_center):
+            ego_progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(ego_center)
+            self_progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(point2d)
+            if ego_progress > self_progress:
+                return None, None
+        elif any([outgoing.polygon.contains(ego_center) for outgoing in closest_segment.outgoing_edges]):
+            return None, None
         
+        moving_agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(AGENT_TYPES)
+        moving_agents.append(scenario.initial_ego_state.agent)
         agents_within_range = []
         vehicles_within_range = []
+        agents_within_range_and_roadblock = []
         for agent in moving_agents:
             center_poly = Point(agent.center.x, agent.center.y)
             if agent.center.distance_to(point2d) < self.LEAD_FOLLOW_AGENT_RANGE and speed_setter_catch.contains(center_poly):
                 agents_within_range.append(agent)
-                if agent.tracked_object_type == TrackedObjectType.VEHICLE:
+                if agent.tracked_object_type == TrackedObjectType.VEHICLE or agent.tracked_object_type == TrackedObjectType.EGO:
                     vehicles_within_range.append(agent)
+            if agent.center.distance_to(point2d) < self.SIDE_AGENT_RANGE \
+                    and (agent.tracked_object_type == TrackedObjectType.VEHICLE or agent.tracked_object_type == TrackedObjectType.BICYCLE or agent.tracked_object_type == TrackedObjectType.EGO) \
+                    and closest_segment.parent.contains_point(agent.center):
+                agents_within_range_and_roadblock.append(agent)
         sorted_agents = sorted(agents_within_range, key=lambda x: (x.center.distance_to(point2d)), reverse=False) #sorts closest to furthest
         sorted_vehicles = sorted(vehicles_within_range, key=lambda x: (x.center.distance_to(point2d)), reverse=False) #sorts closest to furthest
 
-        if len(sorted_agents) > 0:
-            velocity = sorted_agents[0].velocity
-        elif segment.outgoing_edges[0].id in traffic_light_status[TrafficLightStatus.RED]:
-            progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(agent.center)
-            distance_to_end = closest_segment.baseline_path.length - progress
-            speed_limit_velocity = StateVector2D(segment.speed_limit_mps * math.cos(heading), segment.speed_limit_mps * math.sin(heading))
-            velocity = min(speed_limit_velocity, distance_to_end / self.TIME_TO_END_OF_SEGMENT)
-        else:
-            velocity = StateVector2D(segment.speed_limit_mps * math.cos(heading), segment.speed_limit_mps * math.sin(heading))
 
+        if len(sorted_agents) > 0:
+            velocity = copy.deepcopy(sorted_agents[0].velocity) #select closest agent in lane region (this is to avoid crashing into pedestriens)
+        else:
+            speed_limit = closest_segment.speed_limit_mps
+            if speed_limit is None:
+                speed_limit = self.DEFAULT_SPEED_LIMIT_MPS
+            velocity = StateVector2D(speed_limit * math.cos(heading), speed_limit * math.sin(heading))
+            
+        all_outgoing_edges_red = False
+        if len(closest_segment.outgoing_edges) > 0:
+            all_outgoing_edges_red = all(edge.id in traffic_light_status[TrafficLightStatusType.RED] for edge in closest_segment.outgoing_edges)
+            
+        if all_outgoing_edges_red: #if all outgoing edges are red, we need to take care to bring the vehicle to a stop to avoid running into the road.
+            progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(point2d)
+            distance_to_end = closest_segment.baseline_path.length - progress
+            speed = min(velocity.magnitude(), distance_to_end / self.TIME_TO_END_OF_SEGMENT)
+            velocity = StateVector2D(speed * math.cos(heading), speed * math.sin(heading))
         
+        goal = None
         if len(sorted_vehicles) > 0:
             current_iter = 0
-            goal = runner.simulation.observations._get_historical_agent_goal(sorted_vehicles[0], current_iter)
-        else:
-            goal_segment = segment #if we cant find a vehicle to copy the goal of, we make our own randomly
-            for _ in range(self.EXTENSION_STEPS):
-                out = segment.outgoing_edges
-                if len(out) > 0:
-                    goal_segment = out[0]
-            
-            first, last = goal_segment.baseline_path.linestring.boundary
+            goal = runner.simulation._observations._get_historical_agent_goal(sorted_vehicles[0], current_iter)
+            goal = copy.deepcopy(goal)
+
+        if goal is None and len(agents_within_range_and_roadblock) > 0:
+            print('how often does this happen?')
+            goal_segment = closest_segment #if we cant find a vehicle to copy the goal of, we make our own and let the automated path extension handle the rest
+            *_, last = goal_segment.baseline_path.linestring.coords #we use the last point in a linestring far away to start setting our goal
+            last = Point(last)
             goal_point = Point2D(last.x, last.y)
             goal = goal_segment.baseline_path.get_nearest_pose_from_position(goal_point)
+            
+        if goal is None:
+            return None, None #if we cant find a vehicle to copy the goal of, then we arent following or leading another vehicle, so this is likely not a great inection spot
         
         #craft agent to inject
         agent_to_insert = Agent(
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(StateSE2(point2d.x, point2d.y, heading), 5, 2, 2),
-            velocity=StateVector2D(velocity[0], velocity[1]),
+            velocity=StateVector2D(velocity.x, velocity.y),
             metadata=SceneObjectMetadata(scenario.get_time_point(0).time_us, "inserted", -2, "inserted"),
             angular_velocity=0.0,
         )
@@ -241,7 +286,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         runner.simulation._observations.add_agent_to_scene(candidate, goal, time_point)
     
     def remove_candidate(self, candidate: Agent, runner: SimulationRunner) -> None:
-        runner.simulation._observations._agents.pop(candidate.metadata.track_token)
+        runner.simulation._observations._get_agents().pop(candidate.metadata.track_token)
     
     def _filter_to_valid_spawn_points(self,
     potential_spawn_points: np.ndarray,
@@ -262,7 +307,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         
         # throw out points which cannot spawn vehicles (no matter the heading)
         width = injection_shape[1] # the smallest radius from center that must be valid for vehicle to the space occupy is width/2
-        valid_spawn_points = [p for p in potential_spawn_points if Point(p).buffer(width/2).covered_by(valid_spawn_areas)]
+        valid_spawn_points = [Point(p) for p in potential_spawn_points if Point(p).buffer(width/2).covered_by(valid_spawn_areas)]
         #we still need to check for intersections when attempting injections, but this should reduce the number of points we need to check
         return valid_spawn_points
     
@@ -272,9 +317,14 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         noise = np.random.normal(np.zeros((1, n)), stdev * np.ones((1, n)), (m, n))
         return points + noise
     
-    def find_relavant_agents(self, observations: MLPlannerAgents, scenario: AbstractScenario):
+    def find_relavant_agents(self, observations: MLPlannerAgents, scenario: AbstractScenario, traffic_light_status: Dict[TrafficLightStatusType, List[str]]):
         relevant_agent_tokens = []
         object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
+        _, ego_lane_level_route_plan = observations._get_roadblock_path(
+                    scenario.get_ego_state_at_iteration(0).agent, 
+                    scenario.get_expert_goal_state()
+                )
+        
         for agent in scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types):
             # Sets agent goal to be it's last known point in the simulation. 
             current_iter = 0
@@ -284,11 +334,40 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                 if observations._is_parked_vehicle(agent, goal, scenario.map_api):
                     continue
 
-                route_plan = observations._get_roadblock_path(agent, goal)
+                _, lane_level_route_plan = observations._get_roadblock_path(agent, goal)
+                if lane_level_route_plan is None:
+                    continue
+                
+                plan_shape = self.get_relavant_plan_shape(lane_level_route_plan, self.RELAVANT_PLAN_DEPTH, self.LOWER_CUT, self.UPPER_CUT, traffic_light_status)
 
-                if not observations._irrelevant_to_ego(route_plan, scenario):
+                ego_plan_shape = self.get_relavant_plan_shape(ego_lane_level_route_plan, self.RELAVANT_PLAN_DEPTH, self.LOWER_CUT, self.UPPER_CUT, traffic_light_status)
+                    
+                if plan_shape.intersects(ego_plan_shape):
                     relevant_agent_tokens.append(agent.track_token)
         return relevant_agent_tokens
+    
+    def get_relavant_plan_shape(self, lane_level_route_plan: List[LaneGraphEdgeMapObject], 
+                                relavant_plan_depth: int, 
+                                lower_cut: float, 
+                                upper_cut: float, 
+                                traffic_light_status: Dict[TrafficLightStatusType, List[str]]
+                                ) -> MultiLineString:
+        """_summary_
+        :param lane_level_route_plan: _description_
+        :param relavant_plan_depth: _description_
+        :param lower_cut: _description_
+        :param upper_cut: _description_
+        :param traffic_light_status: _description_
+        :return: _description_
+        """
+        plan_shape = MultiLineString()
+        for i, lane_object in enumerate(lane_level_route_plan):
+            if isinstance(lane_object, LaneConnector) and lane_object.id in traffic_light_status[TrafficLightStatusType.RED]:
+                linestring = cut_piece(lane_object.baseline_path.linestring, lower_cut, upper_cut)# cuts off first 30% and last 5% of the line
+                plan_shape = plan_shape.union(linestring)
+            if i == relavant_plan_depth:
+                break
+        return plan_shape
     
     def generate_full_fov_polygon(self, ego_object: AgentState, agents: List[AgentState], relavant_agent_tokens: List[str]) -> Polygon:
         """Generates the full fov polygon for all relavant agent taking occlusions into account
@@ -304,7 +383,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             if agent.tracked_object_type == TrackedObjectType.VEHICLE: #if its a vehicle, it can cause occlusions, so we subtract the large through polygon to remove everything behind the target before adding the smaller fov polygon back in
                 full_fov_poly = full_fov_poly.difference(fov_through)
             if agent.track_token in relavant_agent_tokens:
-                full_fov_poly = full_fov_poly.union_all(fov)
+                full_fov_poly = full_fov_poly.union(fov)
         return full_fov_poly
     
     def generate_fov_polygon(self, observer: AgentState, target: AgentState, max_range: int = 1000) -> Tuple[Polygon, Polygon, Polygon]:
@@ -329,8 +408,8 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             fov_through_range_multiplier = fov_through_range / (corner[0]**2 + corner[1]**2)**0.5
             horizon_points.append((corner[0]*fov_through_range_multiplier + observer.center.x, corner[1]*fov_through_range_multiplier + observer.center.y))
         target_poly = Polygon(corners) #the order they get returned in means we dont need to do a convex hull (FL, RL, RR, FR)
-        fov_poly = Polygon(corners.append(observer_origin)).convex_hull.difference(target_poly)
-        fov_through_poly = Polygon(horizon_points.append(observer_origin)).convex_hull
+        fov_poly = Polygon(corners + [observer_origin]).convex_hull.difference(target_poly)
+        fov_through_poly = Polygon(horizon_points + [observer_origin]).convex_hull
         return fov_poly, fov_through_poly, target_poly
     
     def discretize_centerline_segments(self,
@@ -343,7 +422,10 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         # discretize and return coordinates for potential occluding spawns
         #centerlines = centerlines.simplify(self.TOLERANCE, preserve_topology=True).geoms  #simplifiy to reduce density of points
         ### this adds segments, but wont remove any if there are already too many
-        centerlines_segments = centerlines.segmentize(self.DISTANCE_BETWEEN_DISCRETIZED_POINTS) # discretize and break into individual geometries
+        discretized = centerlines.segmentize(self.DISTANCE_BETWEEN_DISCRETIZED_POINTS)
+        if not isinstance(discretized, MultiLineString): #makes sure its a multilinestring
+            discretized = MultiLineString([discretized])
+        centerlines_segments = discretized.geoms # discretize and break into individual geometries
         return np.asarray(
         [
             coord
@@ -364,9 +446,26 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = []
         for layer in layers:
             for obj in map_object_dict[layer]:
-                if obj.id not in traffic_light_status[TrafficLightStatus.RED]:
+                if obj.id not in traffic_light_status[TrafficLightStatusType.RED]:
                     centerlines.append(obj.baseline_path.linestring)
                     map_polys.append(obj.polygon)
         centerlines = union_all(centerlines)
         map_polys = union_all(map_polys)
         return centerlines, map_polys
+    
+    
+class OcclusionInjectionModification(AbstractModification):
+    def __init__(self, inserted_agent: Agent, goal_state: StateSE2, time_point: TimePoint, modifier_string: str):
+        super().__init__() #maybe we will need this later
+        self.inserted_agent = inserted_agent
+        self.goal_state = goal_state
+        self.time_point = time_point
+        self.modifier_string = modifier_string
+        
+    
+        
+    def modify(self, simulation: Simulation) -> None:
+        simulation._observations.add_agent_to_scene(
+            self.inserted_agent, self.goal_state, self.time_point
+        )
+        simulation.scenario._modifier = self.modifier_string

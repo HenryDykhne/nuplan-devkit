@@ -29,6 +29,8 @@ from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
 
 from nuplan.planning.script.builders.scenario_modifier_builder import build_scenario_modifiers
 
+from tqdm import tqdm
+
 logger = logging.getLogger(__name__)
 
 
@@ -147,10 +149,22 @@ def build_simulations(
         scenario_modifiers = build_scenario_modifiers(cfg.modifier_types)
         logger.info('Modyfing Scenarios...')
         original_num_runners = len(simulations)
-        for simulation in simulations:
+        for simulation in tqdm(simulations):
             for modifier in scenario_modifiers:
-                offshoot_scenario_simulations.extend(modifier.modify_scenario(simulation))
+                modified_simulations = modifier.modify_scenario(simulation)
+                logger.info(f'Created {len(modified_simulations)} modified scenarios from scenario with token: {simulation.scenario.token}.')   
+                offshoot_scenario_simulations.extend(modified_simulations)
         simulations = offshoot_scenario_simulations
+        print(worker.__class__.__name__)
+        
+        if worker.__class__.__name__ == 'RayDistributed': # we undo the modifications for running with ray by reseting the simulation. ray will redo them after reloading the object
+            
+            for simulation in simulations:
+                print('hio')
+                simulation.simulation.reset(modify=False)
+                print(simulation.simulation._observations._agents)
+                print('pio')
+                
         logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
     logger.info('Building simulations...DONE!')
     return simulations

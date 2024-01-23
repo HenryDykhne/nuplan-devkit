@@ -74,6 +74,7 @@ class MLPlannerAgents(AbstractObservation):
 
     def reset(self) -> None:
         """Inherited, see superclass."""
+        print('reset')
         self.current_iteration = 0
         self._agents = None
         self._trajectory_cache = {}
@@ -100,7 +101,7 @@ class MLPlannerAgents(AbstractObservation):
                         self._static_agents.append(agent)
                         continue
 
-                    route_plan = self._get_roadblock_path(agent, goal)
+                    route_plan, _ = self._get_roadblock_path(agent, goal)
 
                     if not self._irrelevant_to_ego(route_plan, self._scenario):
                         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
@@ -310,7 +311,7 @@ class MLPlannerAgents(AbstractObservation):
 
         self._agents = self._get_agents() #this action is idempotent
             
-        route_plan = self._get_roadblock_path(agent, goal)
+        route_plan, _ = self._get_roadblock_path(agent, goal)
 
         if route_plan:
             self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
@@ -376,7 +377,7 @@ class MLPlannerAgents(AbstractObservation):
         end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
 
         if start_edge is None:
-            return None
+            return None, None
         
         if end_edge is not None:
             gs = MaxDepthBreadthFirstSearch(start_edge)
@@ -384,16 +385,17 @@ class MLPlannerAgents(AbstractObservation):
         else:
             route_plan = [start_edge]
 
-        route_plan = self._extend_path(route_plan, max_depth)       
+        route_plan = self._extend_path(route_plan, max_depth)
+        lane_level_route_plan = route_plan 
         route_plan = [edge.get_roadblock_id() for edge in route_plan]
-        route_plan = list(dict.fromkeys(route_plan))
+        route_plan = list(dict.fromkeys(route_plan))    #deduplicates
         
         if len(route_plan) == 1:
             route_plan = route_plan + route_plan
 
-        return route_plan
+        return route_plan, lane_level_route_plan
     
-    def _extend_path(self, route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
+    def _extend_path(self, route_plan: List[LaneGraphEdgeMapObject], min_path_length: int = 10, path_direction_offset: int = 0):
         """
         Extends a route plan to a given depth by continually going forward.
         """
