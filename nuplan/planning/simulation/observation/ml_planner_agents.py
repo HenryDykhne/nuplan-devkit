@@ -7,6 +7,7 @@ from omegaconf import DictConfig
 
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.ego_state import EgoState
+from nuplan.common.actor_state.oriented_box import OrientedBox
 from nuplan.common.actor_state.scene_object import SceneObjectMetadata
 from nuplan.common.actor_state.state_representation import StateSE2, StateVector2D, TimePoint
 from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
@@ -32,6 +33,7 @@ from nuplan.planning.simulation.planner.abstract_planner import PlannerInitializ
 from nuplan.planning.simulation.planner.idm_planner import IDMPlanner
 
 from nuplan.planning.simulation.planner.ml_planner.ml_planner import MLPlanner
+from nuplan.planning.simulation.simulation import Simulation
 from nuplan.planning.simulation.simulation_time_controller.simulation_iteration import SimulationIteration
 from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
 from nuplan.planning.training.modeling.torch_module_wrapper import TorchModuleWrapper
@@ -301,7 +303,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return output_buffer
     
-    def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint_record: TimePoint):
+    def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint_record: TimePoint, simulation: Simulation):
         """
         Adds agent to the scene with a given goal during the simulation runtime.
         Gets dict of tracked agents, or lazily creates them it 
@@ -324,6 +326,35 @@ class MLPlannerAgents(AbstractObservation):
             )
 
             self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
+
+        history_buffer = simulation._history_buffer
+        new_observation_buffer = deque()
+
+        for ego_states, observations in zip(history_buffer.ego_state_buffer, history_buffer.observation_buffer):
+            past_time_point = ego_states.time_point
+            tracks = deepcopy(observations.tracked_objects.tracked_objects)
+
+            new_center = StateSE2(x = agent.box.center.x - agent.velocity.x * (timepoint_record.time_s - past_time_point.time_s), y=agent.box.center.y - agent.velocity.y * (timepoint_record.time_s - past_time_point.time_s), heading=agent.box.center.heading)
+
+            new_metadata = SceneObjectMetadata(timestamp_us=past_time_point.time_us, token=agent.metadata.token, track_id=agent.metadata.track_id, track_token=agent.metadata.track_token, category_name=agent.metadata.category_name)
+            new_box = OrientedBox(center=new_center, length=agent.box.length, width=agent.box.width, height=agent.box.height)
+
+            new_agent = Agent(
+                    metadata=new_metadata,
+                    tracked_object_type=agent.tracked_object_type,
+                    oriented_box=new_box,
+                    velocity=agent.velocity,
+                    angular_velocity=agent.angular_velocity
+                )
+            
+            tracks.append(new_agent)
+
+            #list.sort(tracks, key=lambda agent: agent.tracked_object_type.value)
+
+            new_observation_buffer.append(DetectionsTracks(TrackedObjects(tracks)))
+
+
+        simulation._history_buffer = SimulationHistoryBuffer(history_buffer.ego_state_buffer, new_observation_buffer, history_buffer.sample_interval)
 
     def _build_agent_record(self, agent: Agent, timepoint_record: TimePoint):
         """
