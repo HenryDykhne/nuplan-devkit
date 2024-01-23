@@ -45,10 +45,7 @@ class SimulationRunner(AbstractRunner):
         self._simulation.callback.on_initialization_start(self._simulation.setup, self.planner)
 
         # Initialize Planner
-        # print('hey')
         self.planner.initialize(self._simulation.initialize())
-        # if self._simulation.modification:
-        #     self._simulation.modification.modify(self._simulation)
 
         # Execute specific callback
         self._simulation.callback.on_initialization_end(self._simulation.setup, self.planner)

@@ -78,5 +78,4 @@ class LeftAndRightModification(AbstractModification):
         simulation._observations.add_agent_to_scene(
             self.inserted_agent, self.goal_state, self.time_point
         )
-        print('heylo')
         simulation.scenario._modifier = self.modifier_string

@@ -74,12 +74,12 @@ class MLPlannerAgents(AbstractObservation):
 
     def reset(self) -> None:
         """Inherited, see superclass."""
-        print('reset')
         self.current_iteration = 0
         self._agents = None
         self._trajectory_cache = {}
         self._ego_state_history = {}
         self._static_agents = []
+        self.model = self.model.cpu() #we do this to avoid the model being on the gpu when we save it and try to reload it later, since it only moves onto the gpu when we make the agents
 
     def _get_agents(self):
         """

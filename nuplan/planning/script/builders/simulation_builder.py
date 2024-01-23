@@ -155,15 +155,11 @@ def build_simulations(
                 logger.info(f'Created {len(modified_simulations)} modified scenarios from scenario with token: {simulation.scenario.token}.')   
                 offshoot_scenario_simulations.extend(modified_simulations)
         simulations = offshoot_scenario_simulations
-        print(worker.__class__.__name__)
         
-        if worker.__class__.__name__ == 'RayDistributed': # we undo the modifications for running with ray by reseting the simulation. ray will redo them after reloading the object
-            
-            for simulation in simulations:
-                print('hio')
-                simulation.simulation.reset(modify=False)
-                print(simulation.simulation._observations._agents)
-                print('pio')
+        # we undo the modifications for running with the worker by reseting the simulation. the worker should redo them after reloading the object  
+        for simulation in simulations:
+            simulation.simulation.reset(modify=False)
+        # you NEED to reset or reload the simulation for the modifications to take effect
                 
         logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
     logger.info('Building simulations...DONE!')

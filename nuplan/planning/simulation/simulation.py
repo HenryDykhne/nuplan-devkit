@@ -68,7 +68,6 @@ class Simulation:
         self._is_simulation_running = True
         
         self.modification = modification
-        print(modification)
         if self.modification:
             self.modification.modify(self)
 
@@ -102,7 +101,6 @@ class Simulation:
         # Restart simulation
         self._is_simulation_running = True
         if self.modification and modify:
-            print('bye')
             self.modification.modify(self)
 
     def initialize(self) -> PlannerInitialization:
