@@ -4,6 +4,9 @@ import math
 from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
+from nuplan.planning.simulation.controller.abstract_controller import AbstractEgoController
+from nuplan.planning.simulation.controller.motion_model.kinematic_bicycle import KinematicBicycleModel
+from nuplan.planning.simulation.controller.tracker.lqr import LQRTracker
 from omegaconf import DictConfig
 
 from nuplan.common.actor_state.agent import Agent
@@ -22,8 +25,6 @@ from nuplan.database.utils.measure import angle_diff
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
-from nuplan.planning.simulation.controller.motion_model.abstract_motion_model import AbstractMotionModel
-from nuplan.planning.simulation.controller.tracker.abstract_tracker import AbstractTracker
 from nuplan.planning.simulation.controller.two_stage_controller import TwoStageController
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
@@ -55,7 +56,7 @@ class MLPlannerAgents(AbstractObservation):
     """
 
     def __init__(self, model: TorchModuleWrapper, scenario: AbstractScenario, occlusion_cfg: dict, optimization_cfg: dict, planner_type: str, \
-                 pdm_hybrid_ckpt: str, tracker: AbstractTracker, motion_model: AbstractMotionModel) -> None:
+                 pdm_hybrid_ckpt: str, tracker_cfg: dict) -> None:
         """
         Initializes the MLPlannerAgents class.
         :param model: Model to use for inference.
@@ -75,7 +76,7 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache: Dict = {}
         self._static_agents: List[Agent] = []
 
-        self._motion_controller = TwoStageController(scenario, tracker, motion_model)
+        self._tracker_cfg = tracker_cfg
 
     def reset(self) -> None:
         """Inherited, see superclass."""
@@ -179,21 +180,22 @@ class MLPlannerAgents(AbstractObservation):
                 trajectory = agent_data['planner'].compute_trajectory(planner_input)
                 self._trajectory_cache[agent_token] = (next_iteration.time_point.time_s, trajectory)
                 
-            agent_data['ego_state'] = self._get_new_state_from_trajectory(iteration, next_iteration, agent_data['ego_state'], trajectory)
+            agent_data['ego_state'] = self._get_new_state_from_trajectory(iteration, next_iteration, agent_data['ego_state'], trajectory, agent_data['controller'])
             self._ego_state_history[agent_token][next_iteration.time_point] = agent_data['ego_state']
 
 
     def _get_new_state_from_trajectory(self, current_iteration: SimulationIteration,
                                                 next_iteration: SimulationIteration,
                                                 ego_state: EgoState,
-                                                trajectory: AbstractTrajectory) -> EgoState:
+                                                trajectory: AbstractTrajectory,
+                                                controller: AbstractEgoController) -> EgoState:
         """
         Gets the state of the agent at a given timepoint from a trajectory.
         """
 
-        self._motion_controller.reset()
-        self._motion_controller.update_state(current_iteration, next_iteration, ego_state, trajectory)
-        return self._motion_controller.get_state()
+        controller.reset()
+        controller.update_state(current_iteration, next_iteration, ego_state, trajectory)
+        return controller.get_state()
             
     def _build_ego_state_from_agent(self, agent: Agent, time_point: TimePoint) -> EgoState:
         """
@@ -383,10 +385,12 @@ class MLPlannerAgents(AbstractObservation):
         else:
             raise ValueError("Invalid planner type.")
 
-        return {'ego_state': self._build_ego_state_from_agent(agent, timepoint_record), \
+        built_ego_state = self._build_ego_state_from_agent(agent, timepoint_record)
+        return {'ego_state': built_ego_state, \
                 'metadata': agent.metadata,
                 'planner': planner,
-                'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion_cfg.occlusion else None}
+                'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion_cfg.occlusion else None,
+                'controller': TwoStageController(self._scenario, LQRTracker(**self._tracker_cfg), KinematicBicycleModel(built_ego_state.car_footprint.vehicle_parameters))}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """
