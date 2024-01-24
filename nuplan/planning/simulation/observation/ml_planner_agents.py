@@ -1,5 +1,6 @@
 from collections import deque
 from copy import deepcopy
+import math
 from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
@@ -16,6 +17,8 @@ from nuplan.common.actor_state.vehicle_parameters import VehicleParameters
 from nuplan.common.geometry.transform import translate_longitudinally
 from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import LaneGraphEdgeMapObject
+
+from nuplan.database.utils.measure import angle_diff
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
@@ -510,7 +513,7 @@ class MLPlannerAgents(AbstractObservation):
         ego_state_at_start = scenario.get_ego_state_at_iteration(0)
         
         if self._optimization_cfg.mixed_agent_heading_check:
-            if abs(ego_state_at_start.rear_axle.heading - agent.center.heading) <= self._optimization_cfg.mixed_agent_heading_check_range:
+            if abs(angle_diff(ego_state_at_start.rear_axle.heading, agent.center.heading, math.pi*2)) <= self._optimization_cfg.mixed_agent_heading_check_range:
                 return "idm"
 
         for index in range(scenario.get_number_of_iterations()):
