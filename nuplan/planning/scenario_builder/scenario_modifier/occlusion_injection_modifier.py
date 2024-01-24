@@ -158,12 +158,12 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         return modified_simulation_runners
     
     def generate_injection_candidate(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]]) -> Tuple[Agent, StateSE2]:
-        """_summary_
-        :param point: _description_
-        :param runner: _description_
-        :param map_api: _description_
-        :param traffic_light_status: _description_
-        :return: _description_
+        """We generate the agent state and goal pair for the newly injected agent
+        :param point: xy coords of the injection point
+        :param runner: SimulationRunner to inject into
+        :param map_api: map_api of simulation
+        :param traffic_light_status: traffic light status at the time of injection
+        :return: tuple of agent state and goal
         """
         scenario = runner.scenario
         point2d = Point2D(point.x, point.y)
@@ -281,27 +281,23 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         return traffic_light_status
     
     def inject_candidate(self, candidate: Agent, goal: StateSE2, runner: SimulationRunner, time_point: TimePoint) -> None:
-        """_summary_
-        :param candidate: _description_
-        :param goal: _description_
-        :param runner: _description_
-        :param time_point: _description_
-        """
         runner.simulation._observations.add_agent_to_scene(candidate, goal, time_point, runner.simulation)
     
     def remove_candidate(self, candidate: Agent, runner: SimulationRunner) -> None:
-        """_summary_
-        :param candidate: _description_
-        :param runner: _description_
-        """
         runner.simulation._observations._get_agents().pop(candidate.metadata.track_token)
     
     def _filter_to_valid_spawn_points(self,
-    potential_spawn_points: np.ndarray,
-    no_spawn_polys: MultiPolygon,
-    map_polys: MultiPolygon,
+        potential_spawn_points: np.ndarray,
+        no_spawn_polys: MultiPolygon,
+        map_polys: MultiPolygon,
     ) -> List[Point]:
-        """Helper to remove points from potential_spawn_points if they are too close to other vehicles or edges of the road."""
+        """Helper to remove points from potential_spawn_points if they are too close to other vehicles or edges of the road.
+        :param potential_spawn_points: what it says on the tin
+        :param no_spawn_polys: polys we should not spawn inside of like other agents
+        :param map_polys: polygon describing the lanes we can drive on
+        :return: list of valid spawn points
+        """
+        
         # expand geometries to account for vehicle overlaps and drivable areas
         injection_shape = (5,2)#####TODO pull out these magic numbers
         half_shape_diag = ((injection_shape[0] ** 2 + injection_shape[1] ** 2) ** (1/2)) / 2  # pythag to fetch longest dist from center point, used to make area for headings
@@ -325,7 +321,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         noise = np.random.normal(np.zeros((1, n)), stdev * np.ones((1, n)), (m, n))
         return points + noise
     
-    def find_relavant_agents(self, observations: MLPlannerAgents, scenario: AbstractScenario, traffic_light_status: Dict[TrafficLightStatusType, List[str]]):
+    def find_relavant_agents(self, observations: MLPlannerAgents, scenario: AbstractScenario, traffic_light_status: Dict[TrafficLightStatusType, List[str]]) -> List[str]:
+        """Returns a list of tokens of agents that might be worth occluding
+        :param observations: observations, specifically the MLP planner agents. no point in using anything else since no other observations properly react to occlusions
+        :param scenario: our scenario
+        :param traffic_light_status: traffic light status at the time of injection
+        :return: list of relavant agent tokens
+        """
         relevant_agent_tokens = []
         object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
         _, ego_lane_level_route_plan = observations._get_roadblock_path(
@@ -359,19 +361,19 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                     relevant_agent_tokens.append(agent.track_token)
         return relevant_agent_tokens
     
-    def get_relavant_plan_shape(self, lane_level_route_plan: List[LaneGraphEdgeMapObject], 
-                                relavant_plan_depth: int, 
-                                lower_cut: float, 
-                                upper_cut: float, 
+    def get_relavant_plan_shape(self, lane_level_route_plan: List[LaneGraphEdgeMapObject],
+                                relavant_plan_depth: int,
+                                lower_cut: float,
+                                upper_cut: float,
                                 traffic_light_status: Dict[TrafficLightStatusType, List[str]]
                                 ) -> MultiLineString:
-        """_summary_
-        :param lane_level_route_plan: _description_
-        :param relavant_plan_depth: _description_
-        :param lower_cut: _description_
-        :param upper_cut: _description_
-        :param traffic_light_status: _description_
-        :return: _description_
+        """returns multilinestring that represents the relavant portions of the future plan (where lane connectors are since thats where agents cross each other)
+        :param lane_level_route_plan: list of lane graph objects that make up the plan
+        :param relavant_plan_depth: how deep to search. 0 imples to only look at the first lane connector
+        :param lower_cut: how much to remove from the start of the connector
+        :param upper_cut: how much to remove from the end of the connector (we do this to try and avoid intersections where lane connectors merge together)
+        :param traffic_light_status: traffic light status at the time of injection
+        :return: the multilinestring that represents the relavant portions of the future plan
         """
         plan_shape = MultiLineString()
         for i, lane_object in enumerate(lane_level_route_plan):
@@ -384,9 +386,10 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     
     def generate_full_fov_polygon(self, ego_object: AgentState, agents: List[AgentState], relavant_agent_tokens: List[str]) -> Polygon:
         """Generates the full fov polygon for all relavant agent taking occlusions into account
-        :param ego_object: _description_
-        :param agents: _description_
-        :return: _description_
+        :param ego_object: ego
+        :param agents: all agents in the scene
+        :param relavant_agent_tokens: tokens of relavant agents
+        :return: polygon representing the full fov
         """
         sorted_agents = sorted(agents, key=lambda x: (x.center.distance_to(ego_object.center)), reverse=True) #sorts farthest to closest
         full_fov_poly = Polygon()
@@ -449,9 +452,12 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     
     def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]]) -> Tuple[MultiLineString, MultiPolygon]:
         """Helper function to get map geometry from a map.
-        :param map_api: _description_
-        :return: _description_
+        :param ego_object: ego object to center map on
+        :param map_api: what it says on the tin
+        :param traffic_light_status: traffic light status at the time of injection
+        :return: A multilinestring of all the centerlines, and a multipolygon of all the map polygons
         """
+        
         # get centerlines
         layers = [SemanticMapLayer.LANE, SemanticMapLayer.LANE_CONNECTOR]
         map_object_dict = map_api.get_proximal_map_objects(ego_object.center.point, self.MAP_RADIUS, layers)
