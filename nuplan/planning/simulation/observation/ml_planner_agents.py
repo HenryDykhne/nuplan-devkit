@@ -390,7 +390,7 @@ class MLPlannerAgents(AbstractObservation):
                 'metadata': agent.metadata,
                 'planner': planner,
                 'occlusion': build_occlusion_manager(self._occlusion_cfg, self._scenario) if self._occlusion_cfg.occlusion else None,
-                'controller': TwoStageController(self._scenario, LQRTracker(**self._tracker_cfg), KinematicBicycleModel(built_ego_state.car_footprint.vehicle_parameters))}
+                'controller': TwoStageController(self._scenario, LQRTracker(**self._tracker_cfg, vehicle=built_ego_state.car_footprint.vehicle_parameters), KinematicBicycleModel(built_ego_state.car_footprint.vehicle_parameters))}
     
     def _get_historical_agent_goal(self, agent: Agent, iteration_index: int):
         """
