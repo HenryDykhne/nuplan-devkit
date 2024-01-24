@@ -68,11 +68,10 @@ class LeftAndRightModifier(AbstractScenarioModifier):
     
 class LeftAndRightModification(AbstractModification):
     def __init__(self, inserted_agent: Agent, goal_state: StateSE2, time_point: TimePoint, modifier_string: str):
-        super().__init__() #maybe we will need this later
+        super().__init__(modifier_string) #maybe we will need this later
         self.inserted_agent = inserted_agent
         self.goal_state = goal_state
         self.time_point = time_point
-        self.modifier_string = modifier_string
         
     def modify(self, simulation: Simulation) -> None:
         simulation._observations.add_agent_to_scene(

@@ -19,6 +19,9 @@ class AbstractScenarioModifier(metaclass=ABCMeta):
     
 class AbstractModification(metaclass=ABCMeta):
     @abstractmethod
+    def __init__(self, modifier_string: str):
+        self.modifier_string = modifier_string
+    
     def modify(self, simulation: Simulation) -> None:
         """We perform the modification on the simulation. This helps with reimplementing the modification after the simulation has been unpickled.
         :param scenario: a simulation

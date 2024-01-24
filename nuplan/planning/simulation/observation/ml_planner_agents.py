@@ -1,5 +1,6 @@
 from collections import deque
 from copy import deepcopy
+import math
 from typing import Dict, List, Optional, Tuple, Type
 
 import numpy as np
@@ -45,6 +46,7 @@ from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_hybrid_planner im
 from tuplan_garage.planning.simulation.planner.pdm_planner.proposal.batch_idm_policy import BatchIDMPolicy
 
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer
+from nuplan.database.utils.measure import angle_diff
 
 class MLPlannerAgents(AbstractObservation):
     """
@@ -81,7 +83,8 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache = {}
         self._ego_state_history = {}
         self._static_agents = []
-        self.model = self.model.cpu() #we do this to avoid the model being on the gpu when we save it and try to reload it later, since it only moves onto the gpu when we make the agents
+        if self.model is not None:
+            self.model = self.model.cpu() #we do this to avoid the model being on the gpu when we save it and try to reload it later, since it only moves onto the gpu when we make the agents
 
     def _get_agents(self):
         """
@@ -310,6 +313,11 @@ class MLPlannerAgents(AbstractObservation):
         from vehicles at simulation start if it does not exist.
         """
         assert 'inserted' in agent.metadata.track_token
+        
+        if simulation._history_buffer is None:
+            simulation._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                simulation._history_buffer_size, simulation._scenario, simulation._observations.observation_type()
+            )
 
         self._agents = self._get_agents() #this action is idempotent
             
@@ -467,7 +475,7 @@ class MLPlannerAgents(AbstractObservation):
 
         # Get segment with the closest heading to the agent
         heading_diff = [
-            segment.baseline_path.get_nearest_pose_from_position(target_state).heading - target_state.heading
+            angle_diff(segment.baseline_path.get_nearest_pose_from_position(target_state).heading, target_state.heading, math.pi*2)
             for segment in segments
         ]
         closest_segment = segments[np.argmin(np.abs(heading_diff))]
@@ -511,7 +519,7 @@ class MLPlannerAgents(AbstractObservation):
         ego_state_at_start = scenario.get_ego_state_at_iteration(0)
         
         if self._optimization_cfg.mixed_agent_heading_check:
-            if abs(ego_state_at_start.rear_axle.heading - agent.center.heading) <= self._optimization_cfg.mixed_agent_heading_check_range:
+            if abs(angle_diff(ego_state_at_start.rear_axle.heading, agent.center.heading, math.pi*2)) <= self._optimization_cfg.mixed_agent_heading_check_range:
                 return "idm"
 
         for index in range(scenario.get_number_of_iterations()):

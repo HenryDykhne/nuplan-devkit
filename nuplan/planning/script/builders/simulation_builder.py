@@ -1,12 +1,14 @@
+import copy
 import logging
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 from nuplan.common.utils.distributed_scenario_filter import DistributedMode, DistributedScenarioFilter
 from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario_builder import NuPlanScenarioBuilder
+from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
 from nuplan.planning.script.builders.metric_builder import build_metrics_engines
 from nuplan.planning.script.builders.observation_builder import build_observations
 from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
@@ -25,7 +27,7 @@ from nuplan.planning.simulation.simulation_setup import SimulationSetup
 from nuplan.planning.simulation.simulation_time_controller.abstract_simulation_time_controller import (
     AbstractSimulationTimeController,
 )
-from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
+from nuplan.planning.utils.multithreading.worker_pool import Task, WorkerPool
 
 from nuplan.planning.script.builders.scenario_modifier_builder import build_scenario_modifiers
 
@@ -144,23 +146,47 @@ def build_simulations(
             simulations.append(SimulationRunner(simulation, planner))
             
     # here we need to convert those simulations to our special scenarios
-    if 'modify_scenario_simulations' in cfg and cfg.modify_scenario_simulations:
+    if 'modify_scenario_simulations' in cfg and cfg.modify_scenario_simulations: 
         offshoot_scenario_simulations = []
-        scenario_modifiers = build_scenario_modifiers(cfg.modifier_types)
         logger.info('Modyfing Scenarios...')
         original_num_runners = len(simulations)
-        for simulation in tqdm(simulations):
-            for modifier in scenario_modifiers:
-                modified_simulations = modifier.modify_scenario(simulation)
-                logger.info(f'Created {len(modified_simulations)} modified scenarios from scenario with token: {simulation.scenario.token}.')   
-                offshoot_scenario_simulations.extend(modified_simulations)
+        original_modified_tokens = []
+        num_gpus = cfg.number_of_gpus_allocated_per_simulation
+        num_cpus = cfg.number_of_cpus_allocated_per_simulation
+        print(num_cpus, num_gpus, 'are the number of cpus and gpus')
+        offshoot_scenario_modifications: List[Tuple[str, str, List[AbstractModification]]] = worker.map(
+            Task(fn=modify_simulations, num_gpus=num_gpus, num_cpus=num_cpus), simulations, [cfg]*len(simulations), verbose=True)
+        for mods_for_sim, sim in tqdm(zip(offshoot_scenario_modifications, simulations)):
+            if len(mods_for_sim[2]) > 0:
+                logger.info(mods_for_sim[1])
+                for mod in tqdm(mods_for_sim[2]):
+                    clone = copy.deepcopy(sim)
+                    clone.simulation.modification = mod
+                    clone.scenario._modifier = mod.modifier_string
+                    offshoot_scenario_simulations.append(clone)
+                original_modified_tokens.append(mods_for_sim[0])
         simulations = offshoot_scenario_simulations
         
-        # we undo the modifications for running with the worker by reseting the simulation. the worker should redo them after reloading the object  
-        for simulation in simulations:
-            simulation.simulation.reset(modify=False)
         # you NEED to reset or reload the simulation for the modifications to take effect
-                
+        print("[\n\t'"+("',\n\t'".join(original_modified_tokens))+"'\n]")
         logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
     logger.info('Building simulations...DONE!')
     return simulations
+
+def modify_simulations(simulation: SimulationRunner, cfg: DictConfig) -> Tuple[str, str, List[AbstractModification]]:
+    """_summary_
+    :param simulation: _description_
+    :param cfg: _description_
+    :return: _description_
+    """
+    modifier_types = cfg.modifier_types
+    scenario_modifiers = build_scenario_modifiers(modifier_types)
+    all_modified_simulations = []
+    log = ''
+    for modifier in scenario_modifiers:
+        modified_simulations = modifier.modify_scenario(simulation)
+        log += f'Created {len(modified_simulations)} modified scenarios from scenario with token: {simulation.scenario.token}.\n'
+    all_modified_simulations.extend(modified_simulations)
+    log = log[:-1]
+    
+    return simulation.scenario.token, log, [new.simulation.modification for new in all_modified_simulations]

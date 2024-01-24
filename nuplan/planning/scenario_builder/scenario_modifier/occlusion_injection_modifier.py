@@ -15,6 +15,7 @@ from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import Lane, LaneConnector, LaneGraphEdgeMapObject
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
 from nuplan.database.nuplan_db_orm.traffic_light_status import TrafficLightStatus
+from nuplan.database.utils.measure import angle_diff
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
@@ -38,8 +39,8 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     MAP_RADIUS = 200.0
     SAMPLE_SPAWN_POINT_STDEV = 0.20
     ADD_NOISE = True
-    MINIMUM_SPAWNING_DISTANCE = 0.5 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
-    MIN_DISTANCE_BETWEEN_INJECTIONS = 0.3
+    MINIMUM_SPAWNING_DISTANCE = 1.0 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
+    MIN_DISTANCE_BETWEEN_INJECTIONS = 1.0
     LEAD_FOLLOW_AGENT_RANGE = 20.0 #agents we copy the speed and goal from that we are leading or following
     SIDE_AGENT_RANGE = 10.0 #agents we check exist in case we cant find a goal from leading and following agents, just to make sure there is something that could be worth occluding in a lane beside us
     EXTENSION_STEPS = 3
@@ -61,7 +62,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         scenario = runner.scenario
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
         relavant_agent_tokens = self.find_relavant_agents(runner.simulation._observations, scenario, traffic_light_status)
-        print('Number of relavant agent tokens', len(relavant_agent_tokens))
+        #print('Number of relavant agent tokens', len(relavant_agent_tokens))
         # here we generate the field of view polygons for each relavant agent, taking into account potential occlusions even from nonrelavant agents
         ego_object = scenario.get_ego_state_at_iteration(0)
         ego_agent = ego_object.agent
@@ -83,6 +84,9 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             full_fov_poly
         )
         
+        if potential_occlusion_centerlines.is_empty:
+            return []
+        
         discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
         
         # sample from around feasible points to introduce more variety of scenes we are able to create
@@ -103,7 +107,6 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             map_polys
         )
         
-        print(len(candidate_occluding_spawn_points))
         modified_simulation_runners = []
         modifier_string = "occlusion_injection_"
         modifier_number = 0
@@ -217,10 +220,11 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
 
 
         if len(sorted_agents) > 0:
-            velocity = copy.deepcopy(sorted_agents[0].velocity) #select closest agent in lane region (this is to avoid crashing into pedestriens)
+            speed = sorted_agents[0].velocity.magnitude
+            velocity = StateVector2D(speed * math.cos(heading), speed * math.sin(heading))#select closest agent in lane region (this is to avoid crashing into pedestriens)
         else:
             speed_limit = closest_segment.speed_limit_mps
-            if speed_limit is None:
+            if speed_limit is None or speed_limit <= 1:
                 speed_limit = self.DEFAULT_SPEED_LIMIT_MPS
             velocity = StateVector2D(speed_limit * math.cos(heading), speed_limit * math.sin(heading))
             
@@ -241,7 +245,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
             goal = copy.deepcopy(goal)
 
         if goal is None and len(agents_within_range_and_roadblock) > 0:
-            print('how often does this happen?')
+            # print('how often does this happen?')
             goal_segment = closest_segment #if we cant find a vehicle to copy the goal of, we make our own and let the automated path extension handle the rest
             *_, last = goal_segment.baseline_path.linestring.coords #we use the last point in a linestring far away to start setting our goal
             last = Point(last)
@@ -283,9 +287,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         :param runner: _description_
         :param time_point: _description_
         """
-        runner.simulation._observations.add_agent_to_scene(candidate, goal, time_point)
+        runner.simulation._observations.add_agent_to_scene(candidate, goal, time_point, runner.simulation)
     
     def remove_candidate(self, candidate: Agent, runner: SimulationRunner) -> None:
+        """_summary_
+        :param candidate: _description_
+        :param runner: _description_
+        """
         runner.simulation._observations._get_agents().pop(candidate.metadata.track_token)
     
     def _filter_to_valid_spawn_points(self,
@@ -321,7 +329,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         relevant_agent_tokens = []
         object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
         _, ego_lane_level_route_plan = observations._get_roadblock_path(
-                    scenario.get_ego_state_at_iteration(0).agent, 
+                    scenario.get_ego_state_at_iteration(0).agent,
                     scenario.get_expert_goal_state()
                 )
         
@@ -336,6 +344,11 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
 
                 _, lane_level_route_plan = observations._get_roadblock_path(agent, goal)
                 if lane_level_route_plan is None:
+                    continue
+                
+                heading_diff = angle_diff(agent.center.heading, scenario.get_ego_state_at_iteration(0).agent.center.heading, math.pi*2)
+                check_range = observations._optimization_cfg.mixed_agent_heading_check_range if observations._optimization_cfg.mixed_agent_heading_check else 0.2
+                if abs(heading_diff) <= check_range:#if the agent is aligned with us, its likely not relavant
                     continue
                 
                 plan_shape = self.get_relavant_plan_shape(lane_level_route_plan, self.RELAVANT_PLAN_DEPTH, self.LOWER_CUT, self.UPPER_CUT, traffic_light_status)
@@ -362,7 +375,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         """
         plan_shape = MultiLineString()
         for i, lane_object in enumerate(lane_level_route_plan):
-            if isinstance(lane_object, LaneConnector) and lane_object.id in traffic_light_status[TrafficLightStatusType.RED]:
+            if isinstance(lane_object, LaneConnector) and lane_object.id not in traffic_light_status[TrafficLightStatusType.RED]:
                 linestring = cut_piece(lane_object.baseline_path.linestring, lower_cut, upper_cut)# cuts off first 30% and last 5% of the line
                 plan_shape = plan_shape.union(linestring)
             if i == relavant_plan_depth:
@@ -452,18 +465,15 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         centerlines = union_all(centerlines)
         map_polys = union_all(map_polys)
         return centerlines, map_polys
-    
-    
+
+
 class OcclusionInjectionModification(AbstractModification):
     def __init__(self, inserted_agent: Agent, goal_state: StateSE2, time_point: TimePoint, modifier_string: str):
-        super().__init__() #maybe we will need this later
+        super().__init__(modifier_string) #maybe we will need this later
         self.inserted_agent = inserted_agent
         self.goal_state = goal_state
         self.time_point = time_point
-        self.modifier_string = modifier_string
-        
-    
-        
+
     def modify(self, simulation: Simulation) -> None:
         simulation._observations.add_agent_to_scene(
             self.inserted_agent, self.goal_state, self.time_point, simulation
