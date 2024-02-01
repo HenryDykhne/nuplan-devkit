@@ -83,7 +83,7 @@ class SimulationHistory:
         return [sample.ego_state for sample in self.data]
     
     @property
-    def extract_observations(self) -> List[EgoState]:
+    def extract_observations(self) -> List[Observation]:
         """
         Extract observations in simulation history.
         :return An List of observations.

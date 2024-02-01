@@ -19,7 +19,7 @@ from shapely.ops import linemerge
 
 class CanScenarioBeMadeDangerousStatistics(MetricBase):
     """
-    Check if ego trajectory intersects with an agent that is occluded from the ego before they reach the point of intersection.
+    Check if ego trajectory intersects with an agent that might be occluded from the ego before they reach the point of intersection.
     """
 
     def __init__(

@@ -19,6 +19,7 @@ from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLaye
 from nuplan.common.maps.nuplan_map.polyline_map_object import NuPlanPolylineMapObject
 from nuplan.common.maps.nuplan_map.stop_line import NuPlanStopLine
 from nuplan.common.maps.nuplan_map.utils import get_row_with_value
+from nuplan.database.utils.measure import angle_diff
 
 
 class NuPlanLaneConnector(LaneConnector):
@@ -191,9 +192,27 @@ class NuPlanLaneConnector(LaneConnector):
 
         return [candidate_stop_lines[np.argmin(distances)]]
 
+    @property
     def turn_type(self) -> LaneConnectorType:
         """Inherited from superclass"""
-        raise NotImplementedError
+        line = self.baseline_path.linestring
+        first = line.coords[0]
+        last = line.coords[-1]
+        first = Point2D(*first)
+        last = Point2D(*last)
+        start_heading = self.baseline_path.get_nearest_pose_from_position(first).heading
+        end_heading = self.baseline_path.get_nearest_pose_from_position(last).heading
+        angle = angle_diff(end_heading, start_heading, 2 * np.pi) # returns signed angle, to, from
+        if abs(angle) < np.pi/4: #45 degrees in front
+            return LaneConnectorType.STRAIGHT
+        elif abs(angle) > np.pi - (np.pi/4): #45 degrees behind
+            return LaneConnectorType.UTURN
+        elif angle > 0:
+            return LaneConnectorType.LEFT
+        elif angle < 0:
+            return LaneConnectorType.RIGHT
+        else:
+            return LaneConnectorType.UNKNOWN
 
     def get_width_left_right(
         self, point: Point2D, include_outside: bool = False
