@@ -26,10 +26,7 @@ optimization_cfg:  # Dict that governs scenario optimizations
   subsample_full_inference_distance: 30.0  # Float to determine the minimum distance from ego at which agents should be subsampled
 
 # These defaults are taken from two_stage_controller.yaml
-tracker: 
-  _target_: nuplan.planning.simulation.controller.tracker.lqr.LQRTracker
-  _convert_: 'all'
-
+tracker_cfg: 
   # LQR tuning
   q_longitudinal: [10.0]      # velocity tracking cost gain
   r_longitudinal: [1.0]       # acceleration tracking cost gain
@@ -45,9 +42,3 @@ tracker:
   # Stopping logic
   stopping_proportional_gain: 0.5 # Proportional controller tuning for stopping controller
   stopping_velocity: 0.2          # [m/s] Velocity threshold for stopping
-  
-motion_model: 
-  _target_: nuplan.planning.simulation.controller.motion_model.kinematic_bicycle.KinematicBicycleModel
-  _convert_: 'all'
-
-  vehicle: ${scenario_builder.vehicle_parameters}
