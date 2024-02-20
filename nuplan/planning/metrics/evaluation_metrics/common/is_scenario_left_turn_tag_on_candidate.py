@@ -28,8 +28,13 @@ def is_ego_in_left_turn_lane(scenario: AbstractScenario) -> bool:
 
 def does_ego_make_left_turn(history: SimulationHistory, scenario: AbstractScenario) -> bool:
     lanes_after_turning_left = [] # we grab the outgoing lanes from the lane connector that is straight
-    returned_lanes = scenario.map_api.get_all_map_objects(scenario.initial_ego_state.center, SemanticMapLayer.LANE)
-    if len(returned_lanes) == 0: #there should be exactly one lane that you can be in at once. I think
+    for ego_state in history.extract_ego_state[0:(len(history.extract_ego_state) // 2)]:
+        returned_lanes = scenario.map_api.get_all_map_objects(scenario.initial_ego_state.center, SemanticMapLayer.LANE)
+        if len(returned_lanes) != 0 and len(returned_lanes[0].outgoing_edges) != 0 and isinstance(returned_lanes[0].outgoing_edges[0], LaneConnector):
+            break
+        
+    if len(returned_lanes) == 0 or len(returned_lanes[0].outgoing_edges) == 0 \
+        or not isinstance(returned_lanes[0].outgoing_edges[0], LaneConnector): #there should be exactly one lane that you can be in at once. I think
         return False
     
     for outgoing in returned_lanes[0].outgoing_edges:
@@ -56,10 +61,10 @@ def does_lead_gap_exist(scenario: AbstractScenario, gap_threshold: float) -> boo
             vehicle_closest_segment, vehicle_progress = get_starting_segment(vehicle, scenario.map_api)
             if vehicle_closest_segment is None:
                 continue
-            #if the vehicle is in the same lane and ahead of ego, but not ahead by enough, then we return false since there is not enough room to inject an ego sized agent
+            #if the vehicle is in the same lane and ahead of ego, but not ahead by enough, then we return false since there is not enough room to inject an gap_threshold sized agent
             if vehicle_closest_segment.id == ego_closest_segment.id \
                 and vehicle_progress - ego_progress > 0 \
-                and vehicle_progress - ego_progress < ego_state.agent.box.half_length * 3 + vehicle.box.half_length: # space between front of ego and back of agent must have enough room for a roughly ego length vehicle
+                and vehicle_progress - ego_progress < ego_state.agent.box.half_length + gap_threshold + vehicle.box.half_length: # space between front of ego and back of agent must have enough room for a gap_threshold length vehicle
                 return False
     return True
 
@@ -136,39 +141,62 @@ class IsScenarioLeftTurnTagOnCandidateStatistics(MetricBase):
         
 
         
-    def is_scenario_left_turn_tag_on_candidate(self, history: SimulationHistory, scenario: AbstractScenario) -> bool:
-        # check that ego is in the left turn lane 
-        if not is_ego_in_left_turn_lane(scenario):
-            return False
-        
+    def is_scenario_left_turn_tag_on_candidate(self, history: SimulationHistory, scenario: AbstractScenario) -> List[bool]:
+        checks = []
         # check that ego makes a left turn
         if not does_ego_make_left_turn(history, scenario):
-            return False
+            checks.append(False)
+            #return False
+        else:
+            checks.append(True)
         
-        # check that the left turn is currently not red
-        traffic_light_status = get_traffic_light_status_at_iteration(0, scenario)
-        lane = scenario.map_api.get_all_map_objects(scenario.initial_ego_state.center, SemanticMapLayer.LANE)[0]
+        #construct traffic light status dict
+        traffic_light_status_dict = {}
+        for iteration in range(0, len(history)):
+            # here, we get the traffic light status at the current iteration
+            traffic_light_status_dict[iteration] = get_traffic_light_status_at_iteration(iteration, scenario)
+        
+        # check that the left turn is currently not red for at least a bit of the first half of the simulation
+        lanes = scenario.map_api.get_all_map_objects(scenario.initial_ego_state.center, SemanticMapLayer.LANE)
         non_red_left_cons = []
-        for connector in lane.outgoing_edges:
-            if connector.turn_type == LaneConnectorType.LEFT and connector.id not in traffic_light_status[TrafficLightStatusType.RED]:
-                non_red_left_cons.append(connector)
-        if len(non_red_left_cons) == 0:
-            return False
+        if len(lanes) != 0:
+            lane = scenario.map_api.get_all_map_objects(scenario.initial_ego_state.center, SemanticMapLayer.LANE)[0]
+            
+            for connector in lane.outgoing_edges:
+                if connector.turn_type == LaneConnectorType.LEFT \
+                    and any([connector.id not in traffic_light_status_dict[iteration][TrafficLightStatusType.RED] for iteration in range(len(history)//2)]):
+                    non_red_left_cons.append(connector)
+            if len(non_red_left_cons) == 0:
+                checks.append(False)
+                #return False
+            else:
+                checks.append(True)
+        else:
+            checks.append(False)
+            #return False
+        
         
         # check that there is enough room ahead of ego to place a vehicle
         if not does_lead_gap_exist(scenario, gap_threshold=self.MINIMUM_LEAD_GAP):
-            return False
+            checks.append(False)
+            #return False
+        else:
+            checks.append(True)
         
         # check that there is an oncoming vehicle in the opposing lane
         oncoming_vehicles = get_oncoming_vehicles(scenario, self.MINIMUM_ONCOMING_VEHICLE_HEADING_THRESHOLD)
         if len(oncoming_vehicles) == 0:
-            print('e')
-            return False
+            checks.append(False)
+            #return False
+        else:
+            checks.append(True)
         
         # check that the oncoming vehicles in the opposing lane proceeds straight
         if all([(not is_oncoming_vehicle_going_straight(history, scenario, oncoming_vehicle=oncoming_vehicle)) for oncoming_vehicle in oncoming_vehicles]):
-            print('f', scenario.token)
-            return False
+            checks.append(False)
+            #return False
+        else:
+            checks.append(True)
         
         # check that the oncoming vehicle has a non red light in the straight lane
         all_red = True
@@ -180,29 +208,37 @@ class IsScenarioLeftTurnTagOnCandidateStatistics(MetricBase):
             lane = lanes[0]
             oncoming_cons = []
             for connector in lane.outgoing_edges:
-                if connector.turn_type == LaneConnectorType.STRAIGHT and connector.id not in traffic_light_status[TrafficLightStatusType.RED]:
+                if connector.turn_type == LaneConnectorType.STRAIGHT \
+                and any([connector.id not in traffic_light_status_dict[iteration][TrafficLightStatusType.RED] for iteration in range(history.__len__()//2)]):
                     oncoming_cons.append(connector)
                     all_non_red_oncoming_cons.append(connector)#this is used in the next section which is why we dont break
             if len(oncoming_cons) > 0:
                 all_red = False
         if all_red:
-            print('g', scenario.token)
-            return False
-        
-        # check that the oncoming vehicle is in a lane block that has more than 1 lane ????? DO WE NEED THIS?
-        if len(lane.parent.interior_edges) < 2: #here, we are using the lane from the last run of the previous loop. It will always work because if it ran zero times, all_red would be false and would have returned already
-            print('h', lane.parent.interior_edges)
+            checks.append(False)
+            #print('g', scenario.token)
             #return False
-           
+        else:
+            checks.append(True)
+            
+
         all_not_intersecting = True
         for con in non_red_left_cons: #we check to see if any of the oncoming connectors intersect with the ego left turn connectors
             if any([oncoming_con.baseline_path.linestring.intersects(con.baseline_path.linestring) for oncoming_con in all_non_red_oncoming_cons]):
                 all_not_intersecting = False
         if all_not_intersecting:
-            print('i', scenario.token)
-            return False
-        print('found a candidate!')
-        return True
+            checks.append(False)
+            #print('i', scenario.token)
+            #return False
+        else:
+            checks.append(True)
+            
+        #print('found a candidate!')
+        if all(checks):
+            checks.append(True)
+        else:    
+            checks.append(False)
+        return checks
         
     def compute(self, history: SimulationHistory, scenario: AbstractScenario) -> List[MetricStatistics]:
         """
@@ -211,12 +247,55 @@ class IsScenarioLeftTurnTagOnCandidateStatistics(MetricBase):
         :param scenario: Scenario running this metric
         :return the estimated metric.
         """
-        is_scenario_left_turn_tag_on_candidate = self.is_scenario_left_turn_tag_on_candidate(history=history, scenario=scenario)
+        checks = self.is_scenario_left_turn_tag_on_candidate(history=history, scenario=scenario)
         statistics = [
             Statistic(
                 name='is_scenario_left_turn_tag_on_candidate',
                 unit=MetricStatisticsType.BOOLEAN.unit,
-                value=is_scenario_left_turn_tag_on_candidate,
+                value=checks[-1],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='does_ego_make_left_turn',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[0],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='left_turn_is_not_red',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[1],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='enough_room_ahead_of_ego',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[2],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='does_oncoming_vehicle_exist',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[3],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='does_oncoming_go_straight',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[4],
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='does_oncoming_have_non_red_light',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[5],
+                type=MetricStatisticsType.BOOLEAN,
+            )
+            ,
+            Statistic(
+                name='does_oncoming_intersect_ego',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=checks[6],
                 type=MetricStatisticsType.BOOLEAN,
             )
         ]

@@ -77,8 +77,30 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
 
         if full_fov_poly.area == 0:
             return []
+        
+        #we get a superset of lane ids that we deem valid connectors. to insert agents onto. we want these agents to be leading or adjacent to at least one of the relavant agents or ego to maximize the length of the occlusion
+        _, ego_lane_level_route_plan = runner.simulation._observations._get_roadblock_path(
+            scenario.get_ego_state_at_iteration(0).agent,
+            scenario.get_expert_goal_state()
+        )
+        lane_objects_to_prune_by = []
+        for lane_object in ego_lane_level_route_plan:
+            lane_objects_to_prune_by.append(lane_object)
+            
+        relavant_agents = []
+        for agent in agents:
+            if agent.track_token in relavant_agent_tokens:
+                relavant_agents.append(agent)
 
-        centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
+        for relavant_agent in relavant_agents:
+            current_iter = 0
+            goal = runner.simulation._observations._get_historical_agent_goal(agent, current_iter)
+            _, relavant_agent_route_plan = runner.simulation._observations._get_roadblock_path(relavant_agent, goal)
+            for lane_object in relavant_agent_route_plan:
+                lane_objects_to_prune_by.append(lane_object)
+        
+        lane_objects_to_prune_by = list(dict.fromkeys(lane_objects_to_prune_by)) #remove duplicates
+        centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status, lane_objects_to_prune_by)
         
         potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
             full_fov_poly
@@ -450,11 +472,12 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         ]
     )
     
-    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]]) -> Tuple[MultiLineString, MultiPolygon]:
+    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], lane_objects_to_prune_by = List[LaneGraphEdgeMapObject]) -> Tuple[MultiLineString, MultiPolygon]:
         """Helper function to get map geometry from a map.
         :param ego_object: ego object to center map on
         :param map_api: what it says on the tin
         :param traffic_light_status: traffic light status at the time of injection
+        :param ids_to_prune_by: list of laneobjectd that must be matched to if we want to keep a particular lane centerline. lane connectors must match exactly and lanes must have their parent roadblock match to allow for occlusions by cars in adjacent lanes
         :return: A multilinestring of all the centerlines, and a multipolygon of all the map polygons
         """
         
@@ -465,7 +488,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = []
         for layer in layers:
             for obj in map_object_dict[layer]:
-                if obj.id not in traffic_light_status[TrafficLightStatusType.RED]:
+                if isinstance(obj, SemanticMapLayer.LANE_CONNECTOR):
+                    if (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
+                        continue
+                else: #if its a lane
+                    if (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
+                        continue
+                if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):
                     centerlines.append(obj.baseline_path.linestring)
                     map_polys.append(obj.polygon)
         centerlines = union_all(centerlines)
