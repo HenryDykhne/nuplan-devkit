@@ -513,7 +513,9 @@ class MLPlannerAgents(AbstractObservation):
         """
         Selects a planner type for a mixed planner.
         """
-
+        if 'inserted' in agent.metadata.track_token:
+            return self.planner_type
+            
         ego_state_at_start = scenario.get_ego_state_at_iteration(0)
         
         if self._optimization_cfg.mixed_agent_heading_check:
