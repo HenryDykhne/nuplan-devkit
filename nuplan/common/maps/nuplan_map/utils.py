@@ -5,6 +5,8 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import shapely.geometry as geom
+from shapely.geometry import Point, LineString, MultiLineString
+from shapely.ops import linemerge
 
 from nuplan.common.actor_state.ego_state import EgoState
 from nuplan.common.actor_state.state_representation import Point2D, StateSE2
@@ -12,6 +14,43 @@ from nuplan.common.maps.abstract_map import AbstractMap, MapObject
 from nuplan.common.maps.abstract_map_objects import Lane, LaneConnector, RoadBlockGraphEdgeMapObject
 from nuplan.common.maps.maps_datatypes import RasterLayer, SemanticMapLayer, VectorLayer
 from nuplan.database.maps_db.layer import MapLayer
+
+def cut(line: LineString, distance: float) -> List[LineString]:
+    """ Cuts a line at a distance from its starting point
+    :param line: LineString to cut
+    :param distance: distance from the start of the line to cut
+    :return: tuple of LineStrings
+    """
+    if distance <= 0.0 :#line.length:
+        return [None, LineString(line)]
+    elif distance >= 1.0:
+        return [LineString(line), None]
+    coords = list(line.coords)
+    for i, p in enumerate(coords):
+        pd = line.project(Point(p), normalized=True)
+        if pd == distance:
+            return [
+                LineString(coords[:i+1]),
+                LineString(coords[i:])]
+        if pd > distance:
+            cp = line.interpolate(distance, normalized=True)
+            return [
+                LineString(coords[:i] + [(cp.x, cp.y)]),
+                LineString([(cp.x, cp.y)] + coords[i:])]
+
+def cut_piece(line: LineString, distance1: float, distance2: float):
+    """Cuts a piece out of a line
+    :param line: LineString to cut
+    :param distance1: percentage of line to cut from the start
+    :param distance2: percentage of line to cut from the end
+    :return: LineString of the middle cut piece
+    """
+    l1 = cut(line, distance1)[1]
+    l2 = cut(line, distance2)[0]
+    result = l1.intersection(l2)
+    if type(result) is not MultiLineString:
+        return result
+    return linemerge(result)
 
 
 def raster_layer_from_map_layer(map_layer: MapLayer) -> RasterLayer:

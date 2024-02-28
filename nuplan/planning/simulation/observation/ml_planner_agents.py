@@ -49,6 +49,7 @@ from tuplan_garage.planning.simulation.planner.pdm_planner.pdm_hybrid_planner im
 from tuplan_garage.planning.simulation.planner.pdm_planner.proposal.batch_idm_policy import BatchIDMPolicy
 
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer
+from nuplan.database.utils.measure import angle_diff
 
 class MLPlannerAgents(AbstractObservation):
     """
@@ -85,6 +86,8 @@ class MLPlannerAgents(AbstractObservation):
         self._trajectory_cache = {}
         self._ego_state_history = {}
         self._static_agents = []
+        if self.model is not None:
+            self.model = self.model.cpu() #we do this to avoid the model being on the gpu when we save it and try to reload it later, since it only moves onto the gpu when we make the agents
 
     def _get_agents(self):
         """
@@ -106,7 +109,7 @@ class MLPlannerAgents(AbstractObservation):
                         self._static_agents.append(agent)
                         continue
 
-                    route_plan = self._get_roadblock_path(agent, goal)
+                    route_plan, _ = self._get_roadblock_path(agent, goal)
 
                     if not self._irrelevant_to_ego(route_plan, self._scenario):
                         self._agents[agent.metadata.track_token] = self._build_agent_record(agent, self._scenario.start_time)
@@ -314,10 +317,15 @@ class MLPlannerAgents(AbstractObservation):
         from vehicles at simulation start if it does not exist.
         """
         assert 'inserted' in agent.metadata.track_token
+        
+        if simulation._history_buffer is None:
+            simulation._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                simulation._history_buffer_size, simulation._scenario, simulation._observations.observation_type()
+            )
 
         self._agents = self._get_agents() #this action is idempotent
             
-        route_plan = self._get_roadblock_path(agent, goal)
+        route_plan, _ = self._get_roadblock_path(agent, goal)
 
         if route_plan:
             self._agents[agent.metadata.track_token] = self._build_agent_record(agent, timepoint_record)
@@ -414,7 +422,7 @@ class MLPlannerAgents(AbstractObservation):
         end_edge, _ = self._get_target_state_segment(goal, self._scenario.map_api)
 
         if start_edge is None:
-            return None
+            return None, None
         
         if end_edge is not None:
             gs = MaxDepthBreadthFirstSearch(start_edge)
@@ -422,16 +430,17 @@ class MLPlannerAgents(AbstractObservation):
         else:
             route_plan = [start_edge]
 
-        route_plan = self._extend_path(route_plan, max_depth)        
+        route_plan = self._extend_path(route_plan, max_depth)
+        lane_level_route_plan = route_plan 
         route_plan = [edge.get_roadblock_id() for edge in route_plan]
-        route_plan = list(dict.fromkeys(route_plan))
+        route_plan = list(dict.fromkeys(route_plan))    #deduplicates
         
         if len(route_plan) == 1:
             route_plan = route_plan + route_plan
 
-        return route_plan
+        return route_plan, lane_level_route_plan
     
-    def _extend_path(self, route_plan: List[str], min_path_length: int = 10, path_direction_offset: int = 0):
+    def _extend_path(self, route_plan: List[LaneGraphEdgeMapObject], min_path_length: int = 10, path_direction_offset: int = 0):
         """
         Extends a route plan to a given depth by continually going forward.
         """
@@ -450,8 +459,7 @@ class MLPlannerAgents(AbstractObservation):
 
         return route_plan
 
-    def _get_target_state_segment(
-        self, target_state: StateSE2, map_api: AbstractMap
+    def _get_target_state_segment(self, target_state: StateSE2, map_api: AbstractMap
     ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
         """
         Gets the map object that the target state is on and the progress along the segment.
@@ -473,7 +481,7 @@ class MLPlannerAgents(AbstractObservation):
 
         # Get segment with the closest heading to the agent
         heading_diff = [
-            segment.baseline_path.get_nearest_pose_from_position(target_state).heading - target_state.heading
+            angle_diff(segment.baseline_path.get_nearest_pose_from_position(target_state).heading, target_state.heading, math.pi*2)
             for segment in segments
         ]
         closest_segment = segments[np.argmin(np.abs(heading_diff))]

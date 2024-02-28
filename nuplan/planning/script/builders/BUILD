@@ -32,6 +32,7 @@ py_library(
         "//nuplan/planning/metrics/evaluation_metrics/common:driving_direction_compliance",
         "//nuplan/planning/metrics/evaluation_metrics/common:is_relavant_agent_occluded",
         "//nuplan/planning/metrics/evaluation_metrics/common:can_scenario_be_made_dangerous",
+        "//nuplan/planning/metrics/evaluation_metrics/common:is_scenario_left_turn_tag_on_candidate",
         "//nuplan/planning/metrics/evaluation_metrics/common:ego_acceleration",
         "//nuplan/planning/metrics/evaluation_metrics/common:ego_expert_l2_error",
         "//nuplan/planning/metrics/evaluation_metrics/common:ego_expert_l2_error_with_yaw",

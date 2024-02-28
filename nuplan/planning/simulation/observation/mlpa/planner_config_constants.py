@@ -30,11 +30,11 @@ PDM_CLOSED_AGENT_CONFIG = {
 
 PDM_BATCH_IDM_CONFIG = {
     "speed_limit_fraction":[0.2,0.4,0.6,0.8,1.0], 
-    "fallback_target_velocity":15.0, 
-    "min_gap_to_lead_agent":1.0,
-    "headway_time":1.5,
-    "accel_max":1.5,
-    "decel_max":3.0
+    "fallback_target_velocity":15.0,#15.0
+    "min_gap_to_lead_agent":1.0,#1.0
+    "headway_time":1.5,#1.5
+    "accel_max":3.0,#1.5
+    "decel_max":3.0#3.0
 }
 
 # Taken from pdm_hybrid_planner.yaml in the TuPlan code

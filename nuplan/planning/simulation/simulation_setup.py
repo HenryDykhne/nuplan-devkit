@@ -37,8 +37,8 @@ class SimulationSetup:
         """
         Reset all simulation controllers
         """
-        if self.scenario._modifier == "":
-            self.observations.reset()
+
+        self.observations.reset()
         self.ego_controller.reset()
         self.time_controller.reset()
 

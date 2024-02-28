@@ -10,13 +10,16 @@ from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_
 from nuplan.common.maps.abstract_map_objects import LaneConnector, Lane
 from nuplan.common.maps.maps_datatypes import TrafficLightStatusType
 from nuplan.common.actor_state.agent import Agent
+from nuplan.common.maps.nuplan_map.utils import cut_piece
 
 from shapely.geometry import Point, LineString, MultiLineString
 from shapely.ops import linemerge
 
+
+
 class CanScenarioBeMadeDangerousStatistics(MetricBase):
     """
-    Check if ego trajectory intersects with an agent that is occluded from the ego before they reach the point of intersection.
+    Check if ego trajectory intersects with an agent that might be occluded from the ego before they reach the point of intersection.
     """
 
     def __init__(
@@ -41,43 +44,6 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
     ) -> float:
         """Inherited, see superclass."""
         return float(metric_statistics[0].value)
-    
-    def cut(self, line: LineString, distance: float) -> List[LineString]:
-        """ Cuts a line at a distance from its starting point
-        :param line: LineString to cut
-        :param distance: distance from the start of the line to cut
-        :return: tuple of LineStrings
-        """
-        if distance <= 0.0 :#line.length:
-            return [None, LineString(line)]
-        elif distance >= 1.0:
-            return [LineString(line), None]
-        coords = list(line.coords)
-        for i, p in enumerate(coords):
-            pd = line.project(Point(p), normalized=True)
-            if pd == distance:
-                return [
-                    LineString(coords[:i+1]),
-                    LineString(coords[i:])]
-            if pd > distance:
-                cp = line.interpolate(distance, normalized=True)
-                return [
-                    LineString(coords[:i] + [(cp.x, cp.y)]),
-                    LineString([(cp.x, cp.y)] + coords[i:])]
-
-    def cut_piece(self, line: LineString, distance1: float, distance2: float):
-        """Cuts a piece out of a line
-        :param line: LineString to cut
-        :param distance1: percentage of line to cut from the start
-        :param distance2: percentage of line to cut from the end
-        :return: LineString of the middle cut piece
-        """
-        l1 = self.cut(line, distance1)[1]
-        l2 = self.cut(line, distance2)[0]
-        result = l1.intersection(l2)
-        if type(result) is not MultiLineString:
-            return result
-        return linemerge(result)
     
     def get_non_red_connectors(self, traffic_light_status, map_api, agent: Agent) -> set:
         """ Returns the set of lane connectors that are not red that an agent is in or about to be in
@@ -174,7 +140,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         LOWER_CUT = 0.30
         MIN_DISTANCE = 5 # meters
         MAX_DISTANCE = 80 # meters
-        ego_line = self.cut_piece(ego_connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first 30% and last 5% of the line
+        ego_line = cut_piece(ego_connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first 30% and last 5% of the line
         for iteration in range(0, int(history.__len__() / 2), int(step_size / history.interval_seconds)): # we only observe the first half of the simulation
             agent_connectors = dict()
             detections = scenario.get_tracked_objects_at_iteration(iteration)
@@ -191,7 +157,7 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
             for agent in agents:
                 for connector in agent_connectors[agent.metadata.track_token]:
                     if self.is_connector_mostly_not_red_over_scenario(connector, traffic_light_status_dict, history, step_size): # we only bother checking the connector if is mostly not red
-                        agent_line = self.cut_piece(connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first and last 5% of the line
+                        agent_line = cut_piece(connector.baseline_path.linestring, LOWER_CUT, UPPER_CUT)# cuts off first and last 5% of the line
                         if ego_line.intersects(agent_line) and ego_connector.id != connector.id:
                             return True
         
