@@ -17,6 +17,7 @@ from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLaye
 from nuplan.database.utils.measure import angle_diff
 from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, LineString, MultiPoint
 from shapely import union_all
+from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 
 from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
@@ -33,19 +34,20 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         
     def modify_scenario(self, runner: SimulationRunner) -> List[SimulationRunner]:
         scenario = runner.scenario
-        #TODO: for now, this is a simple way to make sure we are only modifying left turn scenarios but in practice, we should do a real check since some scenarios could be left turns without being labeled as such
-        if scenario.scenario_type != "starting_left_turn":
-            print(f'Warning: scenario {scenario.token} is of type {scenario.scenario_type} and not "starting_left_turn" so we are not modifying it.')
+        
+        crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
+        if crossing_lane_connector is None or crossing_lane_connector.turn_type != LaneConnectorType.LEFT:
+            print(f'Warning: scenario {scenario.token} is does not contain a completed left turn, so we are not modifying it.')
             return []
         
-        historical_egostate_generator = scenario.get_expert_ego_trajectory()
+        #historical_egostate_generator = scenario.get_expert_ego_trajectory()
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
-        initial_ego_agent_object = scenario.get_ego_state_at_iteration(0)
-        initial_ego_agent_state = initial_ego_agent_object.agent
+        ego_object = scenario.get_ego_state_at_iteration(0)
+        ego_agent = ego_object.agent
         
         map_api = scenario.map_api
         _, ego_lane_level_route_plan = runner.simulation._observations._get_roadblock_path(
-                    initial_ego_agent_state,
+                    ego_agent,
                     scenario.get_expert_goal_state()
                 )
         
@@ -61,7 +63,7 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
                 left_turn = map_object
                 break
             if i == 0:
-                progress_along_map_object = map_object.baseline_path.get_nearest_arc_length_from_position(initial_ego_agent_state.center)
+                progress_along_map_object = map_object.baseline_path.get_nearest_arc_length_from_position(ego_agent.center)
                 distance_to_left_turn += map_object.baseline_path.length - progress_along_map_object
             else:
                 distance_to_left_turn += map_object.baseline_path.length
@@ -126,7 +128,7 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         goal_point = Point2D(last.x, last.y)
         potential_oncoming_vehicle_goal = goal_segment.baseline_path.get_nearest_pose_from_position(goal_point)
         
-        potential_oncoming_vehicle_speed = initial_ego_agent_state.velocity.magnitude() #we will use the same speed as the ego, so hopefully the oncoming vehicle will arive at the conflict point at the same time
+        potential_oncoming_vehicle_speed = ego_agent.velocity.magnitude() #we will use the same speed as the ego, so hopefully the oncoming vehicle will arive at the conflict point at the same time
         potential_oncoming_vehicle_heading = potential_oncoming_vehicle_spawn_pose.heading
         #potential_oncoming_vehicle_heading = math.atan2(potential_oncoming_vehicle_spawn_pose.heading.point.y, potential_oncoming_vehicle_spawn_pose.heading.point.x)
         potential_oncoming_vehicle_velocity = StateVector2D(potential_oncoming_vehicle_speed * math.cos(potential_oncoming_vehicle_heading), potential_oncoming_vehicle_speed * math.sin(potential_oncoming_vehicle_heading))
@@ -143,7 +145,7 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         
         objects_to_avoid = list(AGENT_TYPES | STATIC_OBJECT_TYPES) #grab anything we could crash into
         avoid = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(objects_to_avoid)
-        avoid_geoms = [initial_ego_agent_state.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
+        avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
         inject_poly = Polygon(oncoming_agent_to_insert.box.all_corners())
         for obj in avoid:
             avoid_geoms.append(obj.box.geometry)
@@ -160,7 +162,7 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         #check which vehicles are currently visible to the ego vehicle
         manager = WedgeOcclusionManager(scenario)
         visible_relavant_agents = set(relavant_agent_tokens).intersection(
-            manager._compute_visible_agents(initial_ego_agent_object, runner.simulation._observations.get_observation())
+            manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
         )
         
         agents_to_insert = [oncoming_agent_to_insert]
@@ -168,19 +170,138 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         time_points = [scenario.get_time_point(0)]
         
         #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
+        base_modifier_string = "_oncoming_vehicle_injection_for_left_turn_and_occlusion_injection_"
         if len(visible_relavant_agents) == 0:
             num = 0
-            modifier_string = "_oncoming_vehicle_injection_for_left_turn_and_occlusion_injection_" + str(num)
+            modifier_string = base_modifier_string + str(num) + "_natural_occlusion"
             new_sim_runner = copy.deepcopy(runner)
             modification = OncomingInjectionForLeftTurnAndOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string)
             modification.modify(new_sim_runner.simulation)
             new_sim_runner.simulation.modification = modification
             return [new_sim_runner]
         
-        #otherwise, we need to try to inject an occludor
+        #otherwise, we need to try to inject an occluder
+        object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
+        agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
+        agents.extend(agents_to_insert)
+        
+        if len(agents) == 0:
+            print(f'Warning: no initial tracked agents in scenario {scenario.token}')
+            return []
+
+        full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
+
+        if full_fov_poly.area == 0:
+            print(f'Warning: full_fov_poly has area 0 in scenario {scenario.token}')
+            return []
+        
+        #we get a superset of lane ids that we deem valid connectors. to insert agents onto. we want these agents to be leading or adjacent to at least one of the relavant agents or ego to maximize the length of the occlusion
+        _, ego_lane_level_route_plan = runner.simulation._observations._get_roadblock_path(
+            scenario.get_ego_state_at_iteration(0).agent,
+            scenario.get_expert_goal_state()
+        )
+        lane_objects_to_prune_by = []
+        for lane_object in ego_lane_level_route_plan:
+            lane_objects_to_prune_by.append(lane_object)
             
+        relavant_agents = []
+        for agent in agents:
+            if agent.track_token in relavant_agent_tokens:
+                relavant_agents.append(agent)
+
+        for agent, goal in zip(agents_to_insert, goals_to_insert):
+            _, relavant_agent_route_plan = runner.simulation._observations._get_roadblock_path(agent, goal)
+            for lane_object in relavant_agent_route_plan:
+                lane_objects_to_prune_by.append(lane_object)
+                
         
+        lane_objects_to_prune_by = list(dict.fromkeys(lane_objects_to_prune_by)) #remove duplicates
+        centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status, lane_objects_to_prune_by)
         
+        #now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
+        potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
+            full_fov_poly
+        )
+        
+        if potential_occlusion_centerlines.is_empty:
+            print(f'Warning: no centerlines along which an occlusion may be placed in scenario {scenario.token}')
+            return []
+        
+        discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
+        
+        # sample from around feasible points to introduce more variety of scenes we are able to create
+        potential_spawn_points = ( #TODO, maybe sample for each point after checking if original point is too close
+            discretized_points if (not self.ADD_NOISE)
+            else self.sample_around_points(discretized_points, self.SAMPLE_SPAWN_POINT_STDEV)
+        )
+        
+        objects_to_avoid = list(AGENT_TYPES | STATIC_OBJECT_TYPES) #grab anything we could crash into
+        avoid = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(objects_to_avoid)
+        avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
+        for obj in avoid:
+            avoid_geoms.append(obj.box.geometry)
+        avoid_geoms.append(oncoming_agent_to_insert.box.geometry) #dont want to crash into this either
+        avoid_geoms = MultiPolygon(avoid_geoms)
+        candidate_occluding_spawn_points = self._filter_to_valid_spawn_points(
+            potential_spawn_points,
+            avoid_geoms,
+            map_polys
+        )
+        
+        #now we try to inject the potential occluders with the goal of occluding our newly inseted relavant agents
+        modified_simulation_runners = []
+        modifier_number = 0
+        #check which vehicles are currently visible to the ego vehicle
+        manager = WedgeOcclusionManager(scenario)
+        visible_relavant_agents = set(relavant_agent_tokens).intersection(
+            manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
+        )
+        points_injected_at = MultiPoint()
+        iteration = runner.simulation._time_controller.get_iteration()
+        for point in candidate_occluding_spawn_points:
+            # check if the point is too close to other injection sites
+            
+            dist = points_injected_at.distance(point)
+            if not math.isnan(dist) and dist < self.MIN_DISTANCE_BETWEEN_INJECTIONS:
+                continue
+            # inject vehicle at point,
+            candidate, goal = self.generate_injection_candidate(point, runner, scenario.map_api, traffic_light_status, [oncoming_agent_to_insert])
+            
+            if candidate is None:
+                continue
+            
+            inject_poly = Polygon(candidate.box.all_corners())
+            if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
+                continue
+            
+            self.inject_candidate(candidate, goal, runner, iteration.time_point)
+            
+            # check if new occlusion is created among relavant vehicles
+            new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
+                manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
+            )
+            
+            # remove injected vehicle from original scenario
+            self.remove_candidate(candidate, runner)
+            
+            if len(visible_relavant_agents.difference(new_visible_relavant_agents)) > 0:
+                new_sim_runner = copy.deepcopy(runner)
+                ai = copy.deepcopy(agents_to_insert)
+                gi = copy.deepcopy(goals_to_insert)
+                ti = copy.deepcopy(time_points)
+                ai.append(candidate)
+                gi.append(goal)
+                ti.append(iteration.time_point)
+                
+                modifier_string = base_modifier_string + str(modifier_number)
+                modification = OncomingInjectionForLeftTurnAndOcclusionInjectionModification(ai, gi, ti, modifier_string)
+                modification.modify(new_sim_runner.simulation)
+                new_sim_runner.simulation.modification = modification
+                modified_simulation_runners.append(new_sim_runner)
+                points_injected_at = points_injected_at.union(point)
+                modifier_number += 1
+                
+        return modified_simulation_runners
         
 class OncomingInjectionForLeftTurnAndOcclusionInjectionModification(AbstractModification):
     def __init__(self, inserted_agents: List[Agent], goal_states: List[StateSE2], time_points: List[TimePoint], modifier_string: str):

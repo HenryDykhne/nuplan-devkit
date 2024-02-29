@@ -94,7 +94,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
 
         for relavant_agent in relavant_agents:
             current_iter = 0
-            goal = runner.simulation._observations._get_historical_agent_goal(agent, current_iter)
+            goal = runner.simulation._observations._get_historical_agent_goal(relavant_agent, current_iter)
             _, relavant_agent_route_plan = runner.simulation._observations._get_roadblock_path(relavant_agent, goal)
             for lane_object in relavant_agent_route_plan:
                 lane_objects_to_prune_by.append(lane_object)
@@ -102,6 +102,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         lane_objects_to_prune_by = list(dict.fromkeys(lane_objects_to_prune_by)) #remove duplicates
         centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status, lane_objects_to_prune_by)
         
+        #now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
         potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
             full_fov_poly
         )
@@ -179,7 +180,43 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                 
         return modified_simulation_runners
     
-    def generate_injection_candidate(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]]) -> Tuple[Agent, StateSE2]:
+    def how_does_ego_cross_intersection(self, runner: SimulationRunner ) -> LaneConnector:
+        """This returns the lane connector that the ego vehicle uses to cross an intersection. If the ego vehicle is already inside the intersection, it returns None.
+        :param runner: runner that containst the scenario to use to determine how the ego crosses the intersection
+        :return: LaneConnector that the ego uses to cross the intersection
+        """
+        scenario = runner.scenario
+        ego_object = scenario.get_ego_state_at_iteration(0)
+        ego_agent = ego_object.agent
+        _, ego_lane_level_route_plan = runner.simulation._observations._get_roadblock_path(
+                    ego_agent,
+                    scenario.get_expert_goal_state()
+                )
+        if ego_lane_level_route_plan is None:
+            return None
+        
+        depth = 0
+        suspected_connector = None
+        for lane_object in ego_lane_level_route_plan:
+            if depth > 3:
+                return None
+            if isinstance(lane_object, LaneConnector):
+                suspected_connector = lane_object
+                break
+            depth += 1
+        
+        if suspected_connector is None:
+            return None
+        
+        historical_egostate_generator = scenario.get_expert_ego_trajectory()
+        for ego_state in historical_egostate_generator:
+            current_lane_objects = scenario.map_api.get_all_map_objects(ego_state.center.point, SemanticMapLayer.LANE_CONNECTOR)
+            current_lane_object_ids = [lane_object.id for lane_object in current_lane_objects]
+            if suspected_connector.id in current_lane_object_ids:
+                return suspected_connector
+        return None
+    
+    def generate_injection_candidate(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], optional_extra_agents: List[Agent] = []) -> Tuple[Agent, StateSE2]:
         """We generate the agent state and goal pair for the newly injected agent
         :param point: xy coords of the injection point
         :param runner: SimulationRunner to inject into
@@ -207,13 +244,17 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         closest_segment = segments[np.argmin(np.abs(distance))]
         heading = closest_segment.baseline_path.get_nearest_pose_from_position(point2d).heading
         
+        ego_agent = scenario.initial_ego_state.agent
+        ego_center = Point(ego_agent.center.x, ego_agent.center.y)
+        
         speed_setter_catch = closest_segment.polygon
         for segment in closest_segment.outgoing_edges:
             speed_setter_catch = speed_setter_catch.union(segment.polygon)
+        if isinstance(closest_segment, LaneConnector) and len(closest_segment.incoming_edges) > 0 and closest_segment.incoming_edges[0].polygon.contains(ego_center):#if we are right in a lane connector, we might want to check the incoming lane for people behind us as well
+            for segment in closest_segment.incoming_edges:
+                speed_setter_catch = speed_setter_catch.union(segment.polygon)
         
         # we dont want to spawn directly behind ego since even though it might cause an occlusion, such an occlusion is unlikely to result in a collision for ego    
-        ego_agent = scenario.initial_ego_state.agent
-        ego_center = Point(ego_agent.center.x, ego_agent.center.y)
         if closest_segment.polygon.contains(ego_center):
             ego_progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(ego_center)
             self_progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(point2d)
@@ -224,6 +265,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         
         moving_agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(AGENT_TYPES)
         moving_agents.append(scenario.initial_ego_state.agent)
+        moving_agents.extend(optional_extra_agents)
         agents_within_range = []
         vehicles_within_range = []
         agents_within_range_and_roadblock = []
@@ -242,7 +284,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
 
 
         if len(sorted_agents) > 0:
-            speed = sorted_agents[0].velocity.magnitude
+            speed = sorted_agents[0].velocity.magnitude()
             velocity = StateVector2D(speed * math.cos(heading), speed * math.sin(heading))#select closest agent in lane region (this is to avoid crashing into pedestriens)
         else:
             speed_limit = closest_segment.speed_limit_mps
@@ -488,7 +530,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = []
         for layer in layers:
             for obj in map_object_dict[layer]:
-                if isinstance(obj, SemanticMapLayer.LANE_CONNECTOR):
+                if isinstance(obj, LaneConnector):
                     if (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
                         continue
                 else: #if its a lane

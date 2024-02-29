@@ -4,6 +4,8 @@ from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifi
 from nuplan.planning.scenario_builder.scenario_modifier.left_and_right_modifier import LeftAndRightModifier
 from nuplan.planning.scenario_builder.scenario_modifier.occlusion_injection_modifier import OcclusionInjectionModifier
 from nuplan.planning.scenario_builder.scenario_modifier.oncoming_vehicle_injection_for_left_turn_and_occlusion_injection import OncomingInjectionForLeftTurnAndOcclusionInjectionModifier
+from nuplan.planning.scenario_builder.scenario_modifier.conflict_vehicle_injection_and_occlusion_injection import ConflictInjectionAndOcclusionInjectionModifier
+
 
 def build_scenario_modifiers(scenario_modifier_types: List[str]) -> List[AbstractScenarioModifier]:
     modifiers = []
@@ -14,6 +16,8 @@ def build_scenario_modifiers(scenario_modifier_types: List[str]) -> List[Abstrac
              modifiers.append(OcclusionInjectionModifier())
         elif type == "oncoming-left-turn-and-occlusion-injection":
             modifiers.append(OncomingInjectionForLeftTurnAndOcclusionInjectionModifier())
+        elif type == "conflict-and-occlusion-injection":
+            modifiers.append(ConflictInjectionAndOcclusionInjectionModifier())
         # elif type == "occludie-injection":
         #     modifiers.append(OccludieInjection())
         else:
