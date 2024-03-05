@@ -314,11 +314,12 @@ def compute_time_to_collision(
     timestamps_in_common_or_connected_route_objs: List[int],
     all_collisions: List[Collisions],
     timestamps_at_fault_collisions: List[int],
+    timestamps_ego_collisions: List[int],
     map_api: AbstractMap,
     time_step_size: float,
     time_horizon: float,
     stopped_speed_threshold: float = 5e-03,
-) -> npt.NDArray[np.float64]:
+) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
     Computes an estimate of the minimal time to collision with other agents. Ego and agents are projected
     with constant velocity until there is a collision or the maximal time window is reached.
@@ -333,7 +334,7 @@ def compute_time_to_collision(
     :param time_step_size: [s] Step size for the propagation of collision agents.
     :param time_horizon: [s] Time horizon for collision checking.
     :param stopped_speed_threshold: Threshold for 0 speed due to noise.
-    :return: The minimal TTC for each sample, inf if no collision is found within the projection horizon.
+    :return: The minimal TTC for each sample, inf if no collision is found within the projection horizon, and also
     """
     # Extract speed of ego from ego states.
     ego_velocities = extract_ego_velocity(ego_states)
@@ -350,6 +351,7 @@ def compute_time_to_collision(
 
     # Default TTC to be inf
     time_to_collision: npt.NDArray[np.float64] = np.asarray([np.inf] * len(ego_states), dtype=np.float64)
+    time_to_collision_for_all: npt.NDArray[np.float64] = np.asarray([np.inf] * len(ego_states), dtype=np.float64)
 
     for timestamp_index, (timestamp, ego_state, ego_speed, tracks_poses, tracks_speed, tracks_boxes) in enumerate(
         zip(
@@ -373,10 +375,26 @@ def compute_time_to_collision(
             time_horizon,
             stopped_speed_threshold,
         )
+        
+        ttc_at_index_for_all = _compute_time_to_collision_at_timestamp(
+            timestamp,
+            ego_state,
+            ego_speed,
+            tracks_poses,
+            tracks_speed,
+            tracks_boxes,
+            timestamps_ego_collisions,
+            time_step_size,
+            time_horizon,
+            stopped_speed_threshold,
+        )
         if ttc_at_index is not None:
             time_to_collision[timestamp_index] = ttc_at_index
+        
+        if ttc_at_index_for_all is not None:
+            time_to_collision_for_all[timestamp_index] = ttc_at_index_for_all
 
-    return time_to_collision
+    return time_to_collision, time_to_collision_for_all
 
 
 class TimeToCollisionStatistics(MetricBase):
@@ -449,6 +467,7 @@ class TimeToCollisionStatistics(MetricBase):
 
         all_collisions = self._no_ego_at_fault_collisions_metric.all_collisions
         timestamps_at_fault_collisions = self._no_ego_at_fault_collisions_metric.timestamps_at_fault_collisions
+        timestamps_ego_collisions = self._no_ego_at_fault_collisions_metric.timestamps_ego_collisions
 
         # Extract states of ego from history.
         ego_states = history.extract_ego_state
@@ -459,13 +478,14 @@ class TimeToCollisionStatistics(MetricBase):
         # Extract observation from history.
         observations = [sample.observation for sample in history.data]
 
-        time_to_collision = compute_time_to_collision(
+        time_to_collision, time_to_collision_for_all = compute_time_to_collision(
             ego_states,
             ego_timestamps,
             observations,
             timestamps_in_common_or_connected_route_objs,
             all_collisions,
             timestamps_at_fault_collisions,
+            timestamps_ego_collisions,
             history.map_api,
             self._time_step_size,
             self._time_horizon,
@@ -477,6 +497,14 @@ class TimeToCollisionStatistics(MetricBase):
             time_stamps=list(ego_timestamps),
             values=list(time_to_collision),
         )
+        
+        time_to_collision_for_all_within_bounds = self._least_min_ttc < np.array(time_to_collision_for_all, dtype=np.float64)
+        time_series = TimeSeries(
+            unit='time_to_collision_under_' + f'{self._time_horizon}' + '_seconds [s]',
+            time_stamps=list(ego_timestamps),
+            values=list(time_to_collision_for_all),
+        )
+        
         metric_statistics = [
             Statistic(
                 name='min_time_to_collision',
@@ -488,6 +516,18 @@ class TimeToCollisionStatistics(MetricBase):
                 name=f'{self.name}',
                 unit=MetricStatisticsType.BOOLEAN.unit,
                 value=bool(np.all(time_to_collision_within_bounds)),
+                type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='min_time_to_collision_for_all',
+                unit='seconds',
+                value=np.min(time_to_collision_for_all),
+                type=MetricStatisticsType.MIN,
+            ),
+            Statistic(
+                name=f'{self.name}_for_all',
+                unit=MetricStatisticsType.BOOLEAN.unit,
+                value=bool(np.all(time_to_collision_for_all_within_bounds)),
                 type=MetricStatisticsType.BOOLEAN,
             ),
         ]

@@ -115,3 +115,58 @@ def get_fault_type_statistics(
                 ]
             )
     return statistics
+
+def get_type_statistics(
+    all_ego_collisions: Dict[TrackedObjectType, List[float]],
+) -> List[Statistic]:
+    """
+    :param all_ego_collisions: Dict of ego collisions.
+    :return: List of Statistics for all collision track types.
+    """
+    statistics = []
+    track_types_collisions_energy_dict: Dict[str, List[float]] = {}
+
+    for collision_track_type, collision_name in zip(
+        [VRU_types, [TrackedObjectType.VEHICLE], object_types], ['VRUs', 'vehicles', 'objects']
+    ):
+        track_types_collisions_energy_dict[collision_name] = [
+            colision_energy
+            for track_type in collision_track_type
+            for colision_energy in all_ego_collisions[track_type]
+        ]
+        statistics.extend(
+            [
+                Statistic(
+                    name=f'number_of_ego_collisions_with_{collision_name}',
+                    unit=MetricStatisticsType.COUNT.unit,
+                    value=len(track_types_collisions_energy_dict[collision_name]),
+                    type=MetricStatisticsType.COUNT,
+                )
+            ]
+        )
+    for collision_name, track_types_collisions_energy in track_types_collisions_energy_dict.items():
+        if len(track_types_collisions_energy) > 0:
+            statistics.extend(
+                [
+                    Statistic(
+                        name=f'max_ego_collision_energy_with_{collision_name}',
+                        unit="meters_per_second",
+                        value=max(track_types_collisions_energy),
+                        type=MetricStatisticsType.MAX,
+                    ),
+                    Statistic(
+                        name=f'min_ego_collision_energy_with_{collision_name}',
+                        unit="meters_per_second",
+                        value=min(track_types_collisions_energy),
+                        type=MetricStatisticsType.MIN,
+                    ),
+                    Statistic(
+                        name=f'mean_ego_collision_energy_with_{collision_name}',
+                        unit="meters_per_second",
+                        value=np.mean(track_types_collisions_energy),
+                        type=MetricStatisticsType.MEAN,
+                    ),
+                ]
+            )
+    return statistics
+

@@ -1,5 +1,6 @@
 from __future__ import annotations
-from collections import defaultdict
+from collections import defaultdict, deque
+import itertools
 from typing import Dict, List, Set, Tuple, Union
 
 import copy
@@ -7,10 +8,12 @@ import copy
 import math
 import numpy as np
 from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, LineString, MultiPoint
-from shapely import union_all
+from shapely import union_all, affinity
 
 from nuplan.common.actor_state.agent_state import AgentState
 from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_OBJECT_TYPES, TrackedObjectType
+from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObjects
+from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
 from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import Lane, LaneConnector, LaneGraphEdgeMapObject
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
@@ -19,6 +22,7 @@ from nuplan.database.utils.measure import angle_diff
 
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
+from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.ml_planner_agents import MLPlannerAgents
 
 from nuplan.common.actor_state.agent import Agent
@@ -348,7 +352,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         runner.simulation._observations.add_agent_to_scene(candidate, goal, time_point, runner.simulation)
     
     def remove_candidate(self, candidate: Agent, runner: SimulationRunner) -> None:
-        runner.simulation._observations._get_agents().pop(candidate.metadata.track_token)
+        runner.simulation._observations.remove_agent_from_scene(candidate, runner.simulation)
     
     def _filter_to_valid_spawn_points(self,
         potential_spawn_points: np.ndarray,
@@ -542,6 +546,25 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         centerlines = union_all(centerlines)
         map_polys = union_all(map_polys)
         return centerlines, map_polys
+    
+    def calculate_rough_min_time_to_collision(self, ego_agent: Agent, other_agents: List[Agent], interval: float, horizon: float) -> float:
+        """Helper function to calculate the rough minimum time to collision between ego and other agents.
+        :param ego_agent: ego agent
+        :param other_agents: all other agents
+        :param interval: interval between checks. ideally, should be 0.1 which would imply 10Hz
+        :param horizon: maximum time to check to. 
+        :return: rough minimum time to collision
+        """
+        agents = [ego_agent] + other_agents
+        steps = int(horizon / interval)
+        for step in range(1, steps):
+            for agent1, agent2 in itertools.combinations(agents, 2):
+                time = step * interval
+                curr_poly1 = affinity.translate(agent1.box.geometry, xoff=agent1.velocity.x * time, yoff=agent1.velocity.y * time)
+                curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.x * time, yoff=agent2.velocity.y * time)
+                if curr_poly1.intersects(curr_poly2):
+                    return time
+        return horizon
 
 
 class OcclusionInjectionModification(AbstractModification):

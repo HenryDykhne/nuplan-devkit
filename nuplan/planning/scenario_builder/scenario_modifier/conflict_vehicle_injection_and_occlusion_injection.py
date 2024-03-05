@@ -182,7 +182,7 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                 #now that we know there is room, we inject the oncoming vehicle so we can check for occlusion
                 self.inject_candidate(conflict_agent_to_insert, potential_conflict_vehicle_goal, runner, scenario.get_time_point(0))
 
-                relavant_agent_tokens = [conflict_vehicle_token]      
+                relavant_agent_tokens = [conflict_vehicle_token]
                 #check which vehicles are currently visible to the ego vehicle
                 manager = WedgeOcclusionManager(scenario)
                 visible_relavant_agents = set(relavant_agent_tokens).intersection(
@@ -203,6 +203,8 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                     modification.modify(new_sim_runner.simulation)
                     new_sim_runner.simulation.modification = modification
                     all_modified_simulation_runners.append(new_sim_runner)
+                    # remove injected vehicle from original scenario
+                    self.remove_candidate(conflict_agent_to_insert, runner)
                     continue
         
                 #otherwise, we need to try to inject an occluder
@@ -326,7 +328,8 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                         modified_simulation_runners.append(new_sim_runner)
                         points_injected_at = points_injected_at.union(point)
                         modifier_number += 1
-                        
+                
+                self.remove_candidate(conflict_agent_to_insert, runner)        
                 all_modified_simulation_runners.extend(modified_simulation_runners)
                 
         return all_modified_simulation_runners

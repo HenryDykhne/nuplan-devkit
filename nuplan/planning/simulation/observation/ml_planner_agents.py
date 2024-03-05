@@ -310,6 +310,25 @@ class MLPlannerAgents(AbstractObservation):
 
         return output_buffer
     
+    def remove_agent_from_scene(self, agent: Agent, simulation: Simulation):
+        """Removes an agent from the scene
+        """
+        simulation._observations._get_agents().pop(agent.metadata.track_token)
+        history_buffer = simulation._history_buffer
+        new_observation_buffer = deque()
+        for observations in history_buffer.observation_buffer:
+            tracks = []
+            for track in observations.tracked_objects.tracked_objects:
+                if track.metadata.track_token != agent.metadata.track_token:
+                    tracks.append(track)
+
+            new_observation_buffer.append(DetectionsTracks(TrackedObjects(tracks)))
+            
+        simulation._observations._ego_state_history.pop(agent.metadata.track_token)
+        
+        simulation._history_buffer = SimulationHistoryBuffer(history_buffer.ego_state_buffer, new_observation_buffer, history_buffer.sample_interval)
+
+    
     def add_agent_to_scene(self, agent: Agent, goal: StateSE2, timepoint_record: TimePoint, simulation: Simulation):
         """
         Adds agent to the scene with a given goal during the simulation runtime.

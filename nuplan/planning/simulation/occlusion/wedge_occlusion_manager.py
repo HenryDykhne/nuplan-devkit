@@ -71,6 +71,9 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             target_poly = Polygon(corners)
 
             angle = math.atan2(target.center.y - observer.center.y, target.center.x - observer.center.x) # we get the angle relative to the observer
+            if angle < 0:
+                angle += 2 * math.pi #we need our angles here to be between 0 and 2pi since we index by them
+            
             index_of_correct_wedge = int((angle * self.num_wedges) // (2 * math.pi)) # we find the wedge that covers that angle
 
             to_remove = set()
