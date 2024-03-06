@@ -51,12 +51,12 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
         
         crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
         if crossing_lane_connector is None:
-            print(f'Warning: Ego does not cross an intersection in scenario with token: {scenario.token}.')
+            #print(f'Warning: Ego does not cross an intersection in scenario with token: {scenario.token}.')
             return [] 
         
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
         if crossing_lane_connector.id in traffic_light_status[TrafficLightStatusType.RED]:
-            print(f'Left turn {crossing_lane_connector.id} in scenario {scenario.token} has a red traffic light')
+            #print(f'Warning: Crossing lane connector {crossing_lane_connector.id} in scenario {scenario.token} has a red traffic light')
             return []   
         
         ego_object = scenario.get_ego_state_at_iteration(0)
@@ -69,7 +69,7 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                 )
         
         if ego_lane_level_route_plan is None:
-            print(f'Warning: ego in scenario {scenario.token} has no route plan')
+            #print(f'Warning: ego in scenario {scenario.token} has no route plan')
             return []
         
         first = crossing_lane_connector.baseline_path.linestring.coords[0]
@@ -99,7 +99,7 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                     
         
         if len(valid_conflicting_connectors) == 0:
-            print(f'Warning: ego in scenario {scenario.token} has no conflict lanes intersecting its path')
+            #print(f'Warning: ego in scenario {scenario.token} has no conflict lanes intersecting its path')
             return []
         
         distance_to_crossing_lane_connector = 0.0
@@ -113,7 +113,7 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                 distance_to_crossing_lane_connector += map_object.baseline_path.length
             
             if i > 3:
-                print(f'Warning: ego in scenario {scenario.token} has its lane connector too far away from the start of the route plan.')
+                #print(f'Warning: ego in scenario {scenario.token} has its lane connector too far away from the start of the route plan.')
                 return []
         
         all_modified_simulation_runners = []
@@ -179,8 +179,16 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                 if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
                     continue
         
-                #now that we know there is room, we inject the oncoming vehicle so we can check for occlusion
+                #now that we know there is room, we inject the conflict vehicle so we can check for occlusion
                 self.inject_candidate(conflict_agent_to_insert, potential_conflict_vehicle_goal, runner, scenario.get_time_point(0))
+                
+                # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+                vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+                rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+                if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                    #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+                    self.remove_candidate(conflict_agent_to_insert, runner)
+                    continue
 
                 relavant_agent_tokens = [conflict_vehicle_token]
                 #check which vehicles are currently visible to the ego vehicle
@@ -303,6 +311,13 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                         continue
                     
                     self.inject_candidate(candidate, goal, runner, iteration.time_point)
+                    # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+                    vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+                    rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+                    if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                        #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+                        self.remove_candidate(candidate, runner)
+                        continue
                     
                     # check if new occlusion is created among relavant vehicles
                     new_visible_relavant_agents = set(relavant_agent_tokens).intersection(

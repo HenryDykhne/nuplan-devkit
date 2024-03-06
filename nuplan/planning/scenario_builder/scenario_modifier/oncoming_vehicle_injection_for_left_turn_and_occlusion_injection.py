@@ -157,6 +157,14 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
         
         #now that we know there is room, we inject the oncoming vehicle so we can check for occlusion
         self.inject_candidate(oncoming_agent_to_insert, potential_oncoming_vehicle_goal, runner, scenario.get_time_point(0))
+        
+        # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+        vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+        rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+        if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+            print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+            self.remove_candidate(oncoming_agent_to_insert, runner)
+            return []
 
         relavant_agent_tokens = [oncoming_vehicle_token]      
         #check which vehicles are currently visible to the ego vehicle
@@ -275,6 +283,14 @@ class OncomingInjectionForLeftTurnAndOcclusionInjectionModifier(OcclusionInjecti
                 continue
             
             self.inject_candidate(candidate, goal, runner, iteration.time_point)
+            
+            # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+            vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+            rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+            if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+                self.remove_candidate(candidate, runner)
+                continue
             
             # check if new occlusion is created among relavant vehicles
             new_visible_relavant_agents = set(relavant_agent_tokens).intersection(

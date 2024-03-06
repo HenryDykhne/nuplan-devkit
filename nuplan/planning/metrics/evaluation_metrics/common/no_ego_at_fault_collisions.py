@@ -321,7 +321,7 @@ class EgoAtFaultCollisionStatistics(MetricBase):
                 type=MetricStatisticsType.BOOLEAN,
             ),
             Statistic(
-                name='number_of_ego_collisions',
+                name='number_of_all_ego_collisions',
                 unit=MetricStatisticsType.COUNT.unit,
                 value=number_of_ego_collisions,
                 type=MetricStatisticsType.COUNT,

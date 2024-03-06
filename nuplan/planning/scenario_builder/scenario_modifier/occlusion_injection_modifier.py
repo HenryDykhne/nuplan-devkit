@@ -53,6 +53,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     UPPER_CUT = 0.95
     LOWER_CUT = 0.30
     DEFAULT_SPEED_LIMIT_MPS = 15.0 #equates to roughly 54kph
+    MIN_ALLOWED_TIME_TO_COLLISION = 2.0
     
     def __init__(self):
         super().__init__() #maybe we will need this later
@@ -161,6 +162,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                 continue
             
             self.inject_candidate(candidate, goal, runner, iteration.time_point)
+            
+            # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+            vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+            rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+            if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                self.remove_candidate(candidate, runner)
+                continue
             
             # check if new occlusion is created among relavant vehicles
             new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
@@ -547,13 +555,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = union_all(map_polys)
         return centerlines, map_polys
     
-    def calculate_rough_min_time_to_collision(self, ego_agent: Agent, other_agents: List[Agent], interval: float, horizon: float) -> float:
+    def calculate_rough_min_time_to_collision(self, ego_agent: Agent, other_agents: List[Agent], interval: float = 0.1, horizon: float = 3) -> float:
         """Helper function to calculate the rough minimum time to collision between ego and other agents.
         :param ego_agent: ego agent
         :param other_agents: all other agents
-        :param interval: interval between checks. ideally, should be 0.1 which would imply 10Hz
-        :param horizon: maximum time to check to. 
-        :return: rough minimum time to collision
+        :param interval: interval between checks. ideally, should be 0.1s which would imply 10Hz
+        :param horizon: maximum time to check to in seconds. 
+        :return: rough minimum time to collision, or None if above horizon
         """
         agents = [ego_agent] + other_agents
         steps = int(horizon / interval)
@@ -564,7 +572,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                 curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.x * time, yoff=agent2.velocity.y * time)
                 if curr_poly1.intersects(curr_poly2):
                     return time
-        return horizon
+        return None
 
 
 class OcclusionInjectionModification(AbstractModification):
