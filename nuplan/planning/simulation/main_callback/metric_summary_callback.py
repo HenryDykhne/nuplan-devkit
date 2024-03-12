@@ -332,11 +332,11 @@ class MetricSummaryCallback(AbstractMainCallback):
 
         # Compute edges
         histogram_edge_data = compute_histogram_edges(bins=self._num_bins, aggregated_data=histogram_data_dict)
-        self._draw_histogram_plots(
-            planner_color_maps=planner_color_maps,
-            histogram_data_dict=histogram_data_dict,
-            histogram_edges=histogram_edge_data,
-        )
+        # self._draw_histogram_plots(#removing these cause they take up a lot of space in the notebook
+        #     planner_color_maps=planner_color_maps,
+        #     histogram_data_dict=histogram_data_dict,
+        #     histogram_edges=histogram_edge_data,
+        # )
 
         end_time = time.perf_counter()
         elapsed_time_s = end_time - start_time

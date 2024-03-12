@@ -8,10 +8,10 @@ from nuplan.planning.simulation.callback.abstract_callback import AbstractCallba
 from nuplan.planning.simulation.callback.multi_callback import MultiCallback
 from nuplan.planning.simulation.history.simulation_history import SimulationHistory, SimulationHistorySample
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
-from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.simulation_setup import SimulationSetup
 from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
+from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class Simulation:
         simulation_setup: SimulationSetup,
         callback: Optional[AbstractCallback] = None,
         simulation_history_buffer_duration: float = 2,
-        modified_observations: Optional[AbstractObservation] = None,
+        modification: Optional[AbstractModification] = None,
     ):
         """
         Create Simulation.
@@ -46,7 +46,7 @@ class Simulation:
         # Proxy
         self._time_controller = simulation_setup.time_controller
         self._ego_controller = simulation_setup.ego_controller
-        self._observations = modified_observations if (modified_observations is not None) else simulation_setup.observations
+        self._observations = simulation_setup.observations
         self._occlusion_manager = simulation_setup.occlusion_manager
         self._scenario = simulation_setup.scenario
         self._callback = MultiCallback([]) if callback is None else callback
@@ -66,13 +66,17 @@ class Simulation:
 
         # Flag that keeps track whether simulation is still running
         self._is_simulation_running = True
+        
+        self.modification = modification
+        if self.modification:
+            self.modification.modify(self)
 
     def __reduce__(self) -> Tuple[Type[Simulation], Tuple[Any, ...]]:
         """
         Hints on how to reconstruct the object when pickling.
         :return: Object type and constructor arguments to be used.
         """
-        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration, self._observations)
+        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration, self.modification)
 
     def is_simulation_running(self) -> bool:
         """
@@ -81,7 +85,7 @@ class Simulation:
         """
         return not self._time_controller.reached_end() and self._is_simulation_running
 
-    def reset(self) -> None:
+    def reset(self, modify=True) -> None:
         """
         Reset all internal states of simulation.
         """
@@ -96,6 +100,8 @@ class Simulation:
 
         # Restart simulation
         self._is_simulation_running = True
+        if self.modification and modify:
+            self.modification.modify(self)
 
     def initialize(self) -> PlannerInitialization:
         """

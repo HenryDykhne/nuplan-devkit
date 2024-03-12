@@ -1,12 +1,15 @@
+import copy
 import logging
 import os
-from typing import List, Optional
+import pickle
+from typing import List, Optional, Tuple
 
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
 from nuplan.common.utils.distributed_scenario_filter import DistributedMode, DistributedScenarioFilter
 from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario_builder import NuPlanScenarioBuilder
+from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
 from nuplan.planning.script.builders.metric_builder import build_metrics_engines
 from nuplan.planning.script.builders.observation_builder import build_observations
 from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
@@ -25,9 +28,11 @@ from nuplan.planning.simulation.simulation_setup import SimulationSetup
 from nuplan.planning.simulation.simulation_time_controller.abstract_simulation_time_controller import (
     AbstractSimulationTimeController,
 )
-from nuplan.planning.utils.multithreading.worker_pool import WorkerPool
+from nuplan.planning.utils.multithreading.worker_pool import Task, WorkerPool
 
 from nuplan.planning.script.builders.scenario_modifier_builder import build_scenario_modifiers
+
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -143,14 +148,76 @@ def build_simulations(
             
     # here we need to convert those simulations to our special scenarios
     if 'modify_scenario_simulations' in cfg and cfg.modify_scenario_simulations:
-        offshoot_scenario_simulations = []
-        scenario_modifiers = build_scenario_modifiers(cfg.modifier_types)
         logger.info('Modyfing Scenarios...')
+        modification_file_path = 'modifications_for_second_testing_round.pkl'
+        offshoot_scenario_simulations = []
+        original_modified_tokens = []
+        num_modifiable = 0
         original_num_runners = len(simulations)
-        for simulation in simulations:
-            for modifier in scenario_modifiers:
-                offshoot_scenario_simulations.extend(modifier.modify_scenario(simulation))
+        if 'second_testing_round' in cfg and cfg.second_testing_round:
+            # we need to reload the modifications from the first round of testing
+            assert 'scenarios_to_check_in_alternate_regime' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
+            with open(modification_file_path, 'rb') as f:
+                modifications_for_second_testing_round = pickle.load(f)
+                for sim in simulations:
+                    if sim.simulation.scenario.token in modifications_for_second_testing_round:
+                        num_modifiable += 1
+                        for mod in modifications_for_second_testing_round[sim.simulation.scenario.token]:
+                            if sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check_in_alternate_regime:
+                                clone = copy.deepcopy(sim)
+                                clone.simulation.modification = mod
+                                clone.scenario._modifier = mod.modifier_string
+                                offshoot_scenario_simulations.append(clone)
+                                original_modified_tokens.append(sim.simulation.scenario.token)
+                original_modified_tokens = list(dict.fromkeys(original_modified_tokens)) #deduplicate
+        else:
+            num_gpus = cfg.number_of_gpus_allocated_per_simulation
+            num_cpus = cfg.number_of_cpus_allocated_per_simulation
+            print(num_cpus, num_gpus, 'are the number of cpus and gpus')
+            offshoot_scenario_modifications: List[Tuple[str, str, List[AbstractModification]]] = worker.map(
+                Task(fn=modify_simulations, num_gpus=num_gpus, num_cpus=num_cpus), simulations, [cfg]*len(simulations), verbose=True)
+            modifications_for_second_testing_round = dict() #we need this to store all modifications for the second round of testing when we want to compare with and without occlusions
+            for mods_for_sim, sim in tqdm(zip(offshoot_scenario_modifications, simulations)):
+                if len(mods_for_sim[2]) > 0:
+                    num_modifiable += 1
+                    if len(simulations) < 500: #temporary measure to deal with jupyter notebooks truncating output
+                        logger.info(mods_for_sim[1])
+                    for mod in tqdm(mods_for_sim[2]):
+                        clone = copy.deepcopy(sim)
+                        clone.simulation.modification = mod
+                        clone.scenario._modifier = mod.modifier_string
+                        offshoot_scenario_simulations.append(clone)
+                    modifications_for_second_testing_round[mods_for_sim[0]] = mods_for_sim[2]
+                    original_modified_tokens.append(mods_for_sim[0])
+            
+            
+            with open(modification_file_path, 'wb') as f:
+                # saving the modifcations here so we can reload them later
+                pickle.dump(modifications_for_second_testing_round, f)
+            
+            
         simulations = offshoot_scenario_simulations
-        logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios.')   
+        # you NEED to reset or reload the simulation for the modifications to take effect
+        if len(simulations) < 500:
+            print("[\n\t'"+("',\n\t'".join(original_modified_tokens))+"'\n]")
+        logger.info(f'Created {len(simulations)} modified scenarios from {original_num_runners} scenarios, {num_modifiable} of which were modifiable.')
     logger.info('Building simulations...DONE!')
     return simulations
+
+def modify_simulations(simulation: SimulationRunner, cfg: DictConfig) -> Tuple[str, str, List[AbstractModification]]:
+    """_summary_
+    :param simulation: _description_
+    :param cfg: _description_
+    :return: original simulation token, log message, and list of modifications
+    """
+    modifier_types = cfg.modifier_types
+    scenario_modifiers = build_scenario_modifiers(modifier_types)
+    all_modified_simulations = []
+    log = ''
+    for modifier in scenario_modifiers:
+        modified_simulations = modifier.modify_scenario(simulation)
+        log += f'Created {len(modified_simulations)} modified scenarios from scenario with token: {simulation.scenario.token}.\n'
+    all_modified_simulations.extend(modified_simulations)
+    log = log[:-1]
+    
+    return simulation.scenario.token, log, [new.simulation.modification for new in all_modified_simulations]
