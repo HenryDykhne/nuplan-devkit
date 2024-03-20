@@ -526,12 +526,12 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         ]
     )
     
-    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], lane_objects_to_prune_by = List[LaneGraphEdgeMapObject]) -> Tuple[MultiLineString, MultiPolygon]:
+    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], lane_objects_to_prune_by: List[LaneGraphEdgeMapObject] = None) -> Tuple[MultiLineString, MultiPolygon]:
         """Helper function to get map geometry from a map.
         :param ego_object: ego object to center map on
         :param map_api: what it says on the tin
         :param traffic_light_status: traffic light status at the time of injection
-        :param ids_to_prune_by: list of laneobjectd that must be matched to if we want to keep a particular lane centerline. lane connectors must match exactly and lanes must have their parent roadblock match to allow for occlusions by cars in adjacent lanes
+        :param ids_to_prune_by: list of laneobjects that must be matched to if we want to keep a particular lane centerline. lane connectors must match exactly and lanes must have their parent roadblock match to allow for occlusions by cars in adjacent lanes. if it is None, we do not prune
         :return: A multilinestring of all the centerlines, and a multipolygon of all the map polygons
         """
         
@@ -542,11 +542,10 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = []
         for layer in layers:
             for obj in map_object_dict[layer]:
-                if isinstance(obj, LaneConnector):
-                    if (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
+                if lane_objects_to_prune_by is not None:
+                    if isinstance(obj, LaneConnector) and (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
                         continue
-                else: #if its a lane
-                    if (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
+                    elif (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
                         continue
                 if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):
                     centerlines.append(obj.baseline_path.linestring)
@@ -565,11 +564,17 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         """
         agents = [ego_agent] + other_agents
         steps = int(horizon / interval)
+        # print(len(agents))
+        # print(steps)
+        # for agent in agents:
+        #     print(agent.center.x, agent.center.y, agent.velocity.x, agent.velocity.y)
+        #     print(agent.center.x, agent.center.y, agent.velocity.magnitude() * math.cos(agent.center.heading), agent.velocity.magnitude() * math.sin(agent.center.heading))
+
         for step in range(1, steps):
             for agent1, agent2 in itertools.combinations(agents, 2):
                 time = step * interval
-                curr_poly1 = affinity.translate(agent1.box.geometry, xoff=agent1.velocity.x * time, yoff=agent1.velocity.y * time)
-                curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.x * time, yoff=agent2.velocity.y * time)
+                curr_poly1 = affinity.translate(agent1.box.geometry, xoff=agent1.velocity.magnitude() * math.cos(agent1.center.heading) * time, yoff=agent1.velocity.magnitude() * math.sin(agent1.center.heading) * time)
+                curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.magnitude() * math.cos(agent2.center.heading) * time, yoff=agent2.velocity.magnitude() * math.sin(agent2.center.heading) * time)
                 if curr_poly1.intersects(curr_poly2):
                     return time
         return None

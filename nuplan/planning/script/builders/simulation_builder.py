@@ -211,7 +211,7 @@ def modify_simulations(simulation: SimulationRunner, cfg: DictConfig) -> Tuple[s
     :return: original simulation token, log message, and list of modifications
     """
     modifier_types = cfg.modifier_types
-    scenario_modifiers = build_scenario_modifiers(modifier_types)
+    scenario_modifiers = build_scenario_modifiers(modifier_types, cfg)
     all_modified_simulations = []
     log = ''
     for modifier in scenario_modifiers:

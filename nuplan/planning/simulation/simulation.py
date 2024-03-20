@@ -112,9 +112,10 @@ class Simulation:
         self.reset()
 
         # Initialize history from scenario
-        self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
-            self._history_buffer_size, self._scenario, self._observations.observation_type()
-        )
+        if self._history_buffer is None:
+            self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                self._history_buffer_size, self._scenario, self._observations.observation_type()
+            )
 
         # Initialize observations
         self._observations.initialize()

@@ -45,9 +45,6 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
         
     def modify_scenario(self, runner: SimulationRunner) -> List[SimulationRunner]:
         scenario = runner.scenario
-        # determine if ego moves through a lane connector
-        # determine what kind of intersection transition we make
-        # compute potential conflict lane connectors
         
         crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
         if crossing_lane_connector is None:
@@ -154,7 +151,7 @@ class ConflictInjectionAndOcclusionInjectionModifier(OcclusionInjectionModifier)
                 goal_point = Point2D(last.x, last.y)
                 potential_conflict_vehicle_goal = goal_segment.baseline_path.get_nearest_pose_from_position(goal_point)
         
-                potential_conflict_vehicle_speed = ego_agent.velocity.magnitude() #we will use the same speed as the ego, so hopefully the oncoming vehicle will arive at the conflict point at the same time
+                potential_conflict_vehicle_speed = conflict_vehicle_speed
                 potential_conflict_vehicle_heading = potential_conflict_vehicle_spawn_pose.heading
                 potential_conflict_vehicle_velocity = StateVector2D(potential_conflict_vehicle_speed * math.cos(potential_conflict_vehicle_heading), potential_conflict_vehicle_speed * math.sin(potential_conflict_vehicle_heading))
         
