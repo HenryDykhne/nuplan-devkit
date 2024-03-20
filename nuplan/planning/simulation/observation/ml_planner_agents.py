@@ -1,5 +1,6 @@
 from collections import deque
 from copy import deepcopy
+import copy
 import math
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -95,7 +96,7 @@ class MLPlannerAgents(AbstractObservation):
         from vehicles at simulation start if it does not exist.
         """
 
-        if not self._agents:
+        if self._agents is None:
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
@@ -315,7 +316,8 @@ class MLPlannerAgents(AbstractObservation):
         """
         g = len(simulation._observations._get_agents().keys())
         print('lenobj', len(simulation._observations.get_observation().tracked_objects.tracked_objects))
-        for i, obj in enumerate(simulation._observations.get_observation().tracked_objects.tracked_objects):
+        objects = copy.deepcopy(simulation._observations.get_observation().tracked_objects.tracked_objects)
+        for i, obj in enumerate(objects):
             print(i, obj.tracked_object_type)
             if obj.tracked_object_type in agent_types:
                 simulation._observations.remove_agent_from_scene(obj, simulation)
@@ -334,9 +336,14 @@ class MLPlannerAgents(AbstractObservation):
             )
         
         if agent.metadata.track_token in simulation._observations._get_agents():
+            print('track_token', agent.metadata.track_token)
             c = len(simulation._observations._get_agents().keys())
+            print(simulation._observations._get_agents().keys())
+            print('c', c)
             simulation._observations._get_agents().pop(agent.metadata.track_token)
             d = len(simulation._observations._get_agents().keys())
+            print(simulation._observations._get_agents().keys())
+            print('d', d)
             print(simulation.scenario.token, 'c, d', c, d)
 
         e = len(simulation._observations._static_agents)
