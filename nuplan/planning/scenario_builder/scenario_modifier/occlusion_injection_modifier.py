@@ -16,7 +16,7 @@ from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObje
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
 from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import Lane, LaneConnector, LaneGraphEdgeMapObject
-from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
+from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLayer, TrafficLightStatusType
 from nuplan.database.nuplan_db_orm.traffic_light_status import TrafficLightStatus
 from nuplan.database.utils.measure import angle_diff
 
@@ -44,7 +44,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     SAMPLE_SPAWN_POINT_STDEV = 0.20
     ADD_NOISE = True
     MINIMUM_SPAWNING_DISTANCE = 1.0 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
-    MIN_DISTANCE_BETWEEN_INJECTIONS = 1.0
+    MIN_DISTANCE_BETWEEN_INJECTIONS = 2.0
     LEAD_FOLLOW_AGENT_RANGE = 20.0 #agents we copy the speed and goal from that we are leading or following
     SIDE_AGENT_RANGE = 10.0 #agents we check exist in case we cant find a goal from leading and following agents, just to make sure there is something that could be worth occluding in a lane beside us
     EXTENSION_STEPS = 3
@@ -547,9 +547,21 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                         continue
                     elif (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
                         continue
-                if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):
-                    centerlines.append(obj.baseline_path.linestring)
-                    map_polys.append(obj.polygon)
+                    
+                if isinstance(obj, LaneConnector) and obj.turn_type == LaneConnectorType.STRAIGHT: # if its a straight line connector, we dont want to consider it if it intersects with a another straight that has a green light
+                    straight_crossing_green_straight = False
+                    for con in map_object_dict[SemanticMapLayer.LANE_CONNECTOR]:
+                        if obj.id != con.id and con.id in traffic_light_status[TrafficLightStatusType.GREEN] and obj.baseline_path.linestring.intersects(con.baseline_path.linestring):
+                            straight_crossing_green_straight = True
+                    if straight_crossing_green_straight:
+                        continue
+                    
+                if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):#if the lane connector is red, we dont want to consider it
+                    #if the lane has neighbors in the same block that are red we dont want to consider it
+                    if all([(edge.id not in traffic_light_status[TrafficLightStatusType.RED]) for edge in obj.parent.interior_edges]) or \
+                    (isinstance(obj, LaneConnector) and obj.turn_type != LaneConnectorType.STRAIGHT): #unless its not a straight line connector. then it gets a pass since turns can be protected under red lights
+                        centerlines.append(obj.baseline_path.linestring)
+                        map_polys.append(obj.polygon)
         centerlines = union_all(centerlines)
         map_polys = union_all(map_polys)
         return centerlines, map_polys

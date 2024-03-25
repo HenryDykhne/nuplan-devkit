@@ -38,18 +38,13 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
             self.remove_other_agents = cfg.remove_other_agents
         else:
             self.remove_other_agents = False
-        print(self.remove_other_agents )
         
     def modify_scenario(self, runner: SimulationRunner) -> List[SimulationRunner]:
         scenario = runner.scenario
         all_modified_simulation_runners = []
         
-        a = len(runner.simulation._observations.get_observation().tracked_objects.tracked_objects)
         if self.remove_other_agents:
-            print('removing')
             runner.simulation._observations.remove_all_of_object_types_from_scene([TrackedObjectType.VEHICLE], runner.simulation)
-        b = len(runner.simulation._observations.get_observation().tracked_objects.tracked_objects)
-        print('a, b', a, b)
         
         crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
         if crossing_lane_connector is None:
@@ -433,7 +428,7 @@ class SequentialConflictWithOcclusionInjectionModification(AbstractModification)
     def modify(self, simulation: Simulation) -> None:
         if self.remove_other_agents:
             simulation._observations.remove_all_of_object_types_from_scene([TrackedObjectType.VEHICLE], simulation)
-            
+                        
         for inserted_agent, goal_state, time_point in zip(self.inserted_agents, self.goal_states, self.time_points):
             simulation._observations.add_agent_to_scene(
                 inserted_agent, goal_state, time_point, simulation

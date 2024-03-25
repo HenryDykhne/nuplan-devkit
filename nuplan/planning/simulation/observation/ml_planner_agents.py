@@ -173,7 +173,7 @@ class MLPlannerAgents(AbstractObservation):
                 (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._optimization_cfg.subsample_inference_frequency and \
             (((agent_data['ego_state'].center.x - history.current_state[0].center.x) ** 2 + \
                 (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._optimization_cfg.subsample_full_inference_distance:
-                     trajectory = self._trajectory_cache[agent_token][1]
+                    trajectory = self._trajectory_cache[agent_token][1]
             else:
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
 
@@ -314,18 +314,19 @@ class MLPlannerAgents(AbstractObservation):
     def remove_all_of_object_types_from_scene(self, agent_types: List[TrackedObjectType], simulation: Simulation):
         """Removes all agents of a given type from the scene
         """
-        g = len(simulation._observations._get_agents().keys())
-        print('lenobj', len(simulation._observations.get_observation().tracked_objects.tracked_objects))
+        if simulation._history_buffer is None:
+            simulation._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                simulation._history_buffer_size, simulation._scenario, simulation._observations.observation_type()
+            )
         objects = copy.deepcopy(simulation._observations.get_observation().tracked_objects.tracked_objects)
-        for i, obj in enumerate(objects):
-            print(i, obj.tracked_object_type)
+        for obs in simulation.history_buffer.observation_buffer:
+            objects.extend(copy.deepcopy(obs.tracked_objects.tracked_objects))
+        
+        deduped_objects = list({track.metadata.track_token:track for track in objects}.values())
+
+        for obj in deduped_objects:
             if obj.tracked_object_type in agent_types:
                 simulation._observations.remove_agent_from_scene(obj, simulation)
-            print('lenobj', i, len(simulation._observations.get_observation().tracked_objects.tracked_objects))
-                
-        
-        h = len(simulation._observations._get_agents().keys())
-        print(simulation.scenario.token, 'g, h', g, h)
     
     def remove_agent_from_scene(self, agent: Agent, simulation: Simulation):
         """Removes an agent from the scene
@@ -336,20 +337,10 @@ class MLPlannerAgents(AbstractObservation):
             )
         
         if agent.metadata.track_token in simulation._observations._get_agents():
-            print('track_token', agent.metadata.track_token)
-            c = len(simulation._observations._get_agents().keys())
-            print(simulation._observations._get_agents().keys())
-            print('c', c)
             simulation._observations._get_agents().pop(agent.metadata.track_token)
-            d = len(simulation._observations._get_agents().keys())
-            print(simulation._observations._get_agents().keys())
-            print('d', d)
-            print(simulation.scenario.token, 'c, d', c, d)
 
-        e = len(simulation._observations._static_agents)
         simulation._observations._static_agents = [a for a in simulation._observations._static_agents if a.metadata.track_token != agent.metadata.track_token]
-        f = len(simulation._observations._static_agents)
-        print(simulation.scenario.token, 'e, f', e, f)
+        
         history_buffer = simulation._history_buffer
         new_observation_buffer = deque()
         for observations in history_buffer.observation_buffer:
@@ -361,7 +352,6 @@ class MLPlannerAgents(AbstractObservation):
             new_observation_buffer.append(DetectionsTracks(TrackedObjects(tracks)))
             
         if agent.metadata.track_token in simulation._observations._ego_state_history:
-            #print('hi2')
             simulation._observations._ego_state_history.pop(agent.metadata.track_token)
         
         simulation._history_buffer = SimulationHistoryBuffer(history_buffer.ego_state_buffer, new_observation_buffer, history_buffer.sample_interval)
