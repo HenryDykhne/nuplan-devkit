@@ -41,11 +41,18 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
         at this time step.
         """
         # Visible track token set
-        return self._determine_occlusions(ego_state.agent, observations.tracked_objects.tracked_objects)
+        a = [target for target in observations.tracked_objects.tracked_objects if target.metadata.track_token == 'ego']
+        if len(a) == 0:
+            print('seconds', ego_state.time_seconds)
+        temp = self._determine_occlusions(ego_state.agent, observations.tracked_objects.tracked_objects)
+        # if len(a) == 0:
+        #     assert ego_state.time_seconds <= 1627096137.6996388, ego_state.time_seconds
+        return temp
 
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
         #start = time.time()
+        
         rads = np.linspace(0, 2 * math.pi,self.num_wedges + 1)
         wedges = dict()
 
@@ -56,8 +63,8 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             p2 = (self.horizon_threshold * math.cos(d2), self.horizon_threshold * math.sin(d2))
             wedges[i] = Polygon([self.ORIG, p1, p2])
 
-        sorted_targets = sorted(targets, key=lambda x: (x.center.x - observer.center.x)**2 + (x.center.y - observer.center.y)**2) #sorts closest to farthest
-
+        sorted_targets = sorted(targets, key=lambda t: (t.center.x - observer.center.x)**2 + (t.center.y - observer.center.y)**2) #sorts closest to farthest
+        a = [target for target in sorted_targets if target.metadata.track_token == 'ego']
         not_occluded = set() # Visible track token set
         for target in sorted_targets:
             wedge_hits = 0
@@ -68,6 +75,9 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             target_poly = Polygon(corners)
 
             angle = math.atan2(target.center.y - observer.center.y, target.center.x - observer.center.x) # we get the angle relative to the observer
+            if len(a) == 0:
+                if target.track_token == 'merge_conflict_inserted' or target.track_token == 'e7592834abcb5b3b': #the numbers for the target might be coming from the begining of the history window? WTF
+                    print(target.track_token, angle, target.center.y - observer.center.y, target.center.x - observer.center.x, 'ty', target.center.y, 'oy', observer.center.y, 'tx', target.center.x, 'ox', observer.center.x)
             if angle < 0:
                 angle += 2 * math.pi #we need our angles here to be between 0 and 2pi since we index by them
             
@@ -101,6 +111,11 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                     break
                 
                 wedge_idx = (index_of_correct_wedge + i) % self.num_wedges # fan out counterclockwise
+                # if len(a) == 0:
+                #     if target.track_token == 'merge_conflict_inserted':
+                #         print('merge conflict inserted', wedge_idx)
+                #     else:
+                #         print('other', wedge_idx)
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
@@ -114,6 +129,11 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                         counterclockwise_off_target = True
 
                 wedge_idx = (index_of_correct_wedge - i) % self.num_wedges # fan out clockwise
+                # if len(a) == 0:
+                #     if target.track_token == 'merge_conflict_inserted':
+                #         print('merge conflict inserted', wedge_idx)
+                #     else:
+                #         print('other', wedge_idx)
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
@@ -125,6 +145,9 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                             break
                     else:
                         clockwise_off_target = True
+                        
+            if target.track_token == 'merge_conflict_inserted' and len(a) == 0:
+                print('merge conflict inserted wedge hits', wedge_hits)
             
             if wedge_hits >= self.required_hits:
                 not_occluded.add(target.metadata.track_token)
@@ -133,4 +156,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 del wedges[key]
 
         #print('elapsed time:', time.time() - start)
+        
+        if len(a) == 0:
+            print(len([target for target in sorted_targets if (target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO) and (target.metadata.track_token in not_occluded)]))
         return not_occluded

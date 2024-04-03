@@ -8,6 +8,7 @@ import copy
 from nuplan.common.actor_state.ego_state import EgoState
 from nuplan.common.actor_state.tracked_objects import TrackedObjects
 
+from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.history.simulation_history_buffer import SimulationHistoryBuffer
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks, Observation
@@ -56,9 +57,17 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         ego_state_buffer = input_buffer.ego_state_buffer
         observations_buffer = input_buffer.observation_buffer
         sample_interval = input_buffer.sample_interval
+        
+        a = [target for target in input_buffer.observations[-1].tracked_objects.tracked_objects if target.metadata.track_token == 'ego']
+        for obs in input_buffer.observations[-1].tracked_objects.tracked_objects:
+            if len(a) == 0 and obs.tracked_object_type == TrackedObjectType.VEHICLE:
+                print('bbb', obs.track_token, obs.center.x, obs.center.y)
 
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
             if ego_state.time_us not in self._visible_agent_cache:
+                for obs in input_buffer.observations.tracked_objects.tracked_objects:
+                    if len(a) == 0 and obs.tracked_object_type == TrackedObjectType.VEHICLE:
+                        print('ccc', obs.track_token, obs.center.x, obs.center.y)
                 self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
 
         assert len(ego_state_buffer) * input_buffer.sample_interval >= self.uncloak_reaction_time, "SimulationHistoryBuffer must be at least as long as uncloak reaction time."
@@ -67,7 +76,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                 for j, ego_state_c in enumerate(ego_state_buffer): #this for loop only exists to find the right index
                     if ego_state.time_seconds - ego_state_c.time_seconds <= self.uncloak_reaction_time: #this will eventually be true
                         self._compute_noticed_agents(input_buffer.sample_interval, deque(itertools.islice(ego_state_buffer, j, i + 1))) #this is only run once per state not in the noticed_agents_cache
-                        break   
+                        break
                 self._historical_noticed_agent_cache[ego_state.time_us] = copy.deepcopy(self._noticed_agent_cache[ego_state.time_us])
 
         current_time_us = ego_state_buffer[-1].time_us
@@ -78,7 +87,7 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
                 if token in self._visible_agent_cache[self.original_time_us] and 'inserted' in token:
                     for ego_state in ego_state_buffer:
                         self._visible_agent_cache[ego_state.time_us].add(token)
-                        self._noticed_agent_cache[ego_state.time_us].add(token)   
+                        self._noticed_agent_cache[ego_state.time_us].add(token)
             self._historical_noticed_agent_cache[self.original_time_us] = copy.deepcopy(self._noticed_agent_cache[self.original_time_us])                     
         
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
@@ -87,6 +96,10 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         
 
         self._historical_noticed_agent_cache[current_time_us] = copy.deepcopy(self._noticed_agent_cache[current_time_us])
+        
+        a = [agent for agent in observations_buffer[-1].tracked_objects.tracked_objects if agent.metadata.track_token == 'ego']
+        if len(a) == 0:
+            print(((current_time_us-self.original_time_us)//100000), [obj.metadata.track_token for obj in output_buffer.current_state[1].tracked_objects.tracked_objects if obj.tracked_object_type == TrackedObjectType.VEHICLE])
         return output_buffer
     
     @abstractmethod

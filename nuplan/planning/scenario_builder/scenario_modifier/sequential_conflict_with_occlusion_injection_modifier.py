@@ -70,7 +70,6 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
             #print(f'Warning: ego in scenario {scenario.token} has no route plan')
             return []
         
-        
         ego_speed = max(ego_agent.velocity.magnitude(), self.MIN_EGO_SPEED)
         distance_to_conflict = ego_speed * self.TIME_TO_CONFLICT
         for i, map_object in enumerate(ego_lane_level_route_plan):
@@ -98,7 +97,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
 
         conflict_vehicle_velocity = StateVector2D(0,0) # use a speed of zero to ensure the vehicle is not moving and ego can catch up to it to ensure a sequential conflict
         
-        conflict_vehicle_token = "sequential_inserted"
+        conflict_vehicle_token = "sequential_conflict_inserted"
         conflict_agent_to_insert = Agent(
             tracked_object_type=TrackedObjectType.VEHICLE,
             oriented_box=OrientedBox(conflict_vehicle_spawn_pose, 5, 2, 2),
@@ -141,7 +140,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         time_points = [scenario.get_time_point(0)]
         
         #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
-        base_modifier_string = "_conflict_injection_and_occlusion_injection_"
+        base_modifier_string = "_sequential_conflict_injection_and_occlusion_injection_"
         if not self.remove_other_agents:
             #check which vehicles are currently visible to the ego vehicle
             manager = WedgeOcclusionManager(scenario)
@@ -192,7 +191,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
             else self.sample_around_points(discretized_points, self.SAMPLE_SPAWN_POINT_STDEV)
         )
         
-        avoid = runner.simulation._observations.get_observation().tracked_objects.tracked_objects
+        avoid = runner.simulation._observations.get_observation().tracked_objects.tracked_objects #grab anything we could crash into
         avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
         for obj in avoid:
             avoid_geoms.append(obj.box.geometry)

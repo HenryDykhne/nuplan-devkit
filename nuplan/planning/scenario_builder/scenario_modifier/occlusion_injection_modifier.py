@@ -557,8 +557,13 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
                         continue
                     
                 if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):#if the lane connector is red, we dont want to consider it
-                    #if the lane has neighbors in the same block that are red we dont want to consider it
-                    if all([(edge.id not in traffic_light_status[TrafficLightStatusType.RED]) for edge in obj.parent.interior_edges]) or \
+                    #if the lane has any neighbors that are red we dont want to consider it
+                    if len(obj.incoming_edges) == 0:
+                        continue
+                    list_of_lists_of_outgoing_edges = [edge.outgoing_edges for edge in obj.incoming_edges[0].parent.interior_edges]
+                    combined = list(itertools.chain.from_iterable(list_of_lists_of_outgoing_edges))
+                    #if all([(edge.id not in traffic_light_status[TrafficLightStatusType.RED]) for edge in obj.parent.interior_edges]) or \
+                    if all([edge not in traffic_light_status[TrafficLightStatusType.RED] for edge in combined]) or \
                     (isinstance(obj, LaneConnector) and obj.turn_type != LaneConnectorType.STRAIGHT): #unless its not a straight line connector. then it gets a pass since turns can be protected under red lights
                         centerlines.append(obj.baseline_path.linestring)
                         map_polys.append(obj.polygon)
