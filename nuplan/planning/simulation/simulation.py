@@ -149,10 +149,6 @@ class Simulation:
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         history_input = self._history_buffer
-        a = [target for target in history_input.observations[-1].tracked_objects.tracked_objects if target.metadata.track_token == 'ego']
-        for obs in history_input.observations[-1].tracked_objects.tracked_objects:
-            if len(a) == 0 and obs.tracked_object_type == TrackedObjectType.VEHICLE:
-                print('aaa', obs.track_token, obs.center.x, obs.center.y)
             
         if self._occlusion_manager is not None:
             history_input = self._occlusion_manager.occlude_input(history_input)

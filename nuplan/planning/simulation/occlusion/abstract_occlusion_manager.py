@@ -57,17 +57,9 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
         ego_state_buffer = input_buffer.ego_state_buffer
         observations_buffer = input_buffer.observation_buffer
         sample_interval = input_buffer.sample_interval
-        
-        a = [target for target in input_buffer.observations[-1].tracked_objects.tracked_objects if target.metadata.track_token == 'ego']
-        for obs in input_buffer.observations[-1].tracked_objects.tracked_objects:
-            if len(a) == 0 and obs.tracked_object_type == TrackedObjectType.VEHICLE:
-                print('bbb', obs.track_token, obs.center.x, obs.center.y)
 
         for ego_state, observations in zip(ego_state_buffer, observations_buffer):
-            if ego_state.time_us not in self._visible_agent_cache:
-                for obs in input_buffer.observations.tracked_objects.tracked_objects:
-                    if len(a) == 0 and obs.tracked_object_type == TrackedObjectType.VEHICLE:
-                        print('ccc', obs.track_token, obs.center.x, obs.center.y)
+            if ego_state.time_us not in self._visible_agent_cache:      
                 self._visible_agent_cache[ego_state.time_us] = self._compute_visible_agents(ego_state, observations)
 
         assert len(ego_state_buffer) * input_buffer.sample_interval >= self.uncloak_reaction_time, "SimulationHistoryBuffer must be at least as long as uncloak reaction time."
@@ -91,15 +83,12 @@ class AbstractOcclusionManager(metaclass=ABCMeta):
             self._historical_noticed_agent_cache[self.original_time_us] = copy.deepcopy(self._noticed_agent_cache[self.original_time_us])                     
         
         output_buffer = SimulationHistoryBuffer(ego_state_buffer, \
-                            deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)]), \
+                            deque([self._mask_input(ego_state.time_us, observations) for ego_state, observations in zip(ego_state_buffer, observations_buffer)], maxlen=input_buffer.observation_buffer.maxlen), \
                                 sample_interval)
         
 
         self._historical_noticed_agent_cache[current_time_us] = copy.deepcopy(self._noticed_agent_cache[current_time_us])
         
-        a = [agent for agent in observations_buffer[-1].tracked_objects.tracked_objects if agent.metadata.track_token == 'ego']
-        if len(a) == 0:
-            print(((current_time_us-self.original_time_us)//100000), [obj.metadata.track_token for obj in output_buffer.current_state[1].tracked_objects.tracked_objects if obj.tracked_object_type == TrackedObjectType.VEHICLE])
         return output_buffer
     
     @abstractmethod

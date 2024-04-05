@@ -30,12 +30,8 @@ from nuplan.planning.simulation.runner.simulations_runner import SimulationRunne
 from nuplan.planning.simulation.simulation import Simulation
 
 class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionInjectionModifier):
-    CONFLICT_RADIUS = 50.0
-    SPEED_OFFSETS = [-9.0, -6.0, -3.0] #speed offsets different to ensure diverging vehicle has a lower speed allowing ego to catch up
-    MIN_EGO_SPEED = 1.0
-    MAX_ALLOWED_SPEED = 15.0
-    MIN_ALLOWED_SPEED = 1.0
-    DIVERGE_CONFLICT_DISTANCE_BUFFER = 1.0 # diverge conflicts should happen a bit past the immediate diverge points, otherwise they end up being no difference than sequential conflicts
+    TIME_TO_CONFLICT = 3.0
+    MIN_DIVERGE_CONNECTOR_BUFFER = 1.0
     
     def __init__(self, cfg):
         super().__init__() #maybe we will need this later
@@ -46,16 +42,19 @@ class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusio
         
     def modify_scenario(self, runner: SimulationRunner) -> List[SimulationRunner]:
         scenario = runner.scenario
-        map_api = scenario.map_api
         all_modified_simulation_runners = []
         
         if self.remove_other_agents:
             runner.simulation._observations.remove_all_of_object_types_from_scene([TrackedObjectType.VEHICLE], runner.simulation)
-            
+        
         crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
         if crossing_lane_connector is None:
             #print(f'Warning: Ego does not cross an intersection in scenario with token: {scenario.token}.')
             return [] 
+        
+        if len(crossing_lane_connector.incoming_edges[0].outgoing_edges) < 3: # we need at least 3 outgoing edges to have a diverge conflict. one for the ego vehicle to drive down, one for the diverging vehicle to diverge, and a third for the occluding vehicle to escape down while revealing the occlusion
+            #print(f'Warning: Crossing lane connector {crossing_lane_connector.id} in scenario {scenario.token} does not have enough outgoing edges.')
+            return []
         
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
         if crossing_lane_connector.id in traffic_light_status[TrafficLightStatusType.RED]:
@@ -74,18 +73,8 @@ class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusio
             #print(f'Warning: ego in scenario {scenario.token} has no route plan')
             return []
         
-        first = crossing_lane_connector.baseline_path.linestring.coords[0]
-        first = Point2D(*first)
         
-        potential_conflicting_connectors = map_api.get_proximal_map_objects(first, self.CONFLICT_RADIUS, [SemanticMapLayer.LANE_CONNECTOR])[SemanticMapLayer.LANE_CONNECTOR]
-        conflicting_connectors = [connector for connector in potential_conflicting_connectors if connector.baseline_path.linestring.intersects(crossing_lane_connector.baseline_path.linestring)]
-        # selecting for only diverging connectors
-        conflicting_diverging_connectors = [connector for connector in conflicting_connectors if (connector.incoming_edges[0].id == crossing_lane_connector.incoming_edges[0].id)]
-        valid_conflicting_connectors = [connector for connector in conflicting_diverging_connectors if connector.id not in traffic_light_status[TrafficLightStatusType.RED]]
-    
-        if len(valid_conflicting_connectors) == 0:
-            #print(f'Warning: ego in scenario {scenario.token} has no conflict lanes intersecting its path')
-            return []
+        map_api = scenario.map_api
         
         distance_to_crossing_lane_connector = 0.0
         for i, map_object in enumerate(ego_lane_level_route_plan):
@@ -101,98 +90,89 @@ class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusio
                 #print(f'Warning: ego in scenario {scenario.token} has its lane connector too far away from the start of the route plan.')
                 return []
             
-        all_modified_simulation_runners = []
-        valid_conflicting_connectors = [connector for connector in valid_conflicting_connectors if connector.id != crossing_lane_connector.id] #removing the connector ego is using
-        for conflict_connector in valid_conflicting_connectors:
-            conflict_point = crossing_lane_connector.baseline_path.linestring.intersection(conflict_connector.baseline_path.linestring)
-            if isinstance(conflict_point, GeometryCollection) or isinstance(conflict_point, MultiPoint) or isinstance(conflict_point, MultiLineString):
-                conflict_point = conflict_point.geoms[0]
-            if isinstance(conflict_point, LineString):
-                conflict_point = conflict_point.coords[0]
-                conflict_point = Point2D(*first)
-            conflict_point = Point2D(conflict_point.x, conflict_point.y)
-            
-            distance_to_conflict_from_begining_of_conflict_connector = conflict_connector.baseline_path.get_nearest_arc_length_from_position(conflict_point)   
-            ego_distance_to_conflict_point = distance_to_crossing_lane_connector + distance_to_conflict_from_begining_of_conflict_connector + self.DIVERGE_CONFLICT_DISTANCE_BUFFER
-            
-            ego_speed = max(ego_agent.velocity.magnitude(), self.MIN_EGO_SPEED)
-            time_to_conflict = ego_distance_to_conflict_point / ego_speed
-            for ego_speed_offset in self.SPEED_OFFSETS:
-                conflict_vehicle_speed = ego_speed + ego_speed_offset
-                if conflict_vehicle_speed < self.MIN_ALLOWED_SPEED or conflict_vehicle_speed > self.MAX_ALLOWED_SPEED:
-                    continue
-                distance_to_conflict_point_for_conflict_vehicle = conflict_vehicle_speed * time_to_conflict
-                distance_to_conflict_from_begining_of_conflict_connector = conflict_connector.baseline_path.get_nearest_arc_length_from_position(conflict_point)
-                distance_from_end_of_conflict_connector_parent_lane = distance_to_conflict_point_for_conflict_vehicle - distance_to_conflict_from_begining_of_conflict_connector
-                
-                conflict_connector_parent_lane = conflict_connector.incoming_edges[0]
-                distance_from_begining_of_conflict_connector_parent_lane = conflict_connector_parent_lane.baseline_path.length - distance_from_end_of_conflict_connector_parent_lane
-                
-                potential_conflict_vehicle_spawn_point = conflict_connector_parent_lane.baseline_path.linestring.interpolate(distance_from_begining_of_conflict_connector_parent_lane)
-                potential_conflict_vehicle_spawn_point = Point2D(potential_conflict_vehicle_spawn_point.x, potential_conflict_vehicle_spawn_point.y)
-                potential_conflict_vehicle_spawn_pose = conflict_connector_parent_lane.baseline_path.get_nearest_pose_from_position(potential_conflict_vehicle_spawn_point)
-                
-                #finding a goal for our conflict vehicle. It will automatically be extended if it is too close.
-                goal_segment = conflict_connector.outgoing_edges[0]
-                *_, last = goal_segment.baseline_path.linestring.coords #we use the last point in a linestring far away to start setting our goal
-                last = Point(last)
-                goal_point = Point2D(last.x, last.y)
-                potential_conflict_vehicle_goal = goal_segment.baseline_path.get_nearest_pose_from_position(goal_point)
         
-                potential_conflict_vehicle_speed = conflict_vehicle_speed
-                potential_conflict_vehicle_heading = potential_conflict_vehicle_spawn_pose.heading
-                potential_conflict_vehicle_velocity = StateVector2D(potential_conflict_vehicle_speed * math.cos(potential_conflict_vehicle_heading), potential_conflict_vehicle_speed * math.sin(potential_conflict_vehicle_heading))
+        diverge_buffer = self.TIME_TO_CONFLICT * ego_agent.velocity.magnitude()
+        if distance_to_crossing_lane_connector == 0:
+            distance_ego_from_begining_of_connector = crossing_lane_connector.baseline_path.get_nearest_arc_length_from_position(ego_agent.center)
+            distance_in_conflict_connector_to_spawn_agent = distance_ego_from_begining_of_connector + diverge_buffer
+        else:
+            distance_in_conflict_connector_to_spawn_agent = max(diverge_buffer - distance_to_crossing_lane_connector, self.MIN_DIVERGE_CONNECTOR_BUFFER)
         
-                conflict_vehicle_token = "diverge_conflict_inserted"
-                conflict_agent_to_insert = Agent(
-                    tracked_object_type=TrackedObjectType.VEHICLE,
-                    oriented_box=OrientedBox(potential_conflict_vehicle_spawn_pose, 5, 2, 2),
-                    velocity=potential_conflict_vehicle_velocity,
-                    metadata=SceneObjectMetadata(scenario.get_time_point(0).time_us,conflict_vehicle_token, -2, conflict_vehicle_token),
-                    angular_velocity=0.0,
-                )
-                
-                avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
-                inject_poly = Polygon(conflict_agent_to_insert.box.all_corners())
-                if self.remove_other_agents:
-                    objects_to_avoid = list(STATIC_OBJECT_TYPES)
-                else:
-                    objects_to_avoid = list(AGENT_TYPES | STATIC_OBJECT_TYPES) #grab anything we could crash into
-                avoid = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(objects_to_avoid)
-                for obj in avoid:
-                    avoid_geoms.append(obj.box.geometry)
-                avoid_geoms = MultiPolygon(avoid_geoms)
+        first = crossing_lane_connector.baseline_path.linestring.coords[0]
+        first = Point2D(*first)
+        potential_conflicting_connectors = map_api.get_proximal_map_objects(first, self.CONFLICT_RADIUS, [SemanticMapLayer.LANE_CONNECTOR])[SemanticMapLayer.LANE_CONNECTOR]
+        conflicting_connectors = [connector for connector in potential_conflicting_connectors if connector.baseline_path.linestring.intersects(crossing_lane_connector.baseline_path.linestring)]
+        # selecting for only diverging connectors
+        conflicting_diverging_connectors = [connector for connector in conflicting_connectors if (connector.incoming_edges[0].id == crossing_lane_connector.incoming_edges[0].id)]
+        # sans the crossing_lane_connector that ego uses
+        conflicting_diverging_connectors = [connector for connector in conflicting_diverging_connectors if (connector.id != crossing_lane_connector.id)]
+        valid_conflicting_connectors = [connector for connector in conflicting_diverging_connectors if connector.id not in traffic_light_status[TrafficLightStatusType.RED]]
+        
+        for connector in valid_conflicting_connectors:
+            conflict_vehicle_spawn_point = connector.baseline_path.linestring.interpolate(distance_in_conflict_connector_to_spawn_agent)
+            conflict_vehicle_spawn_point = Point2D(conflict_vehicle_spawn_point.x, conflict_vehicle_spawn_point.y)
+            conflict_vehicle_spawn_pose = connector.baseline_path.get_nearest_pose_from_position(conflict_vehicle_spawn_point)
+        
+            #finding a goal for our conflict vehicle. It will automatically be extended if it is too close.
+            conflict_vehicle_goal = connector.baseline_path.get_nearest_pose_from_position(conflict_vehicle_spawn_pose)
 
-                if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other objects/agents
-                    return []
-                
-                #now that we know there is room, we inject the conflict vehicle so we can check for occlusion
-                self.inject_candidate(conflict_agent_to_insert, potential_conflict_vehicle_goal, runner, scenario.get_time_point(0))
-                
-                # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
-                vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
-                rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
-                if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
-                    #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
-                    self.remove_candidate(conflict_agent_to_insert, runner)
-                    continue
+            conflict_vehicle_velocity = StateVector2D(0,0) # use a speed of zero to ensure the vehicle is not moving and ego can catch up to it to ensure a diverge/sequential conflict
+            
+            conflict_vehicle_token = "diverge_conflict_inserted"
+            conflict_agent_to_insert = Agent(
+                tracked_object_type=TrackedObjectType.VEHICLE,
+                oriented_box=OrientedBox(conflict_vehicle_spawn_pose, 5, 2, 2),
+                velocity=conflict_vehicle_velocity,
+                metadata=SceneObjectMetadata(scenario.get_time_point(0).time_us,conflict_vehicle_token, -2, conflict_vehicle_token),
+                angular_velocity=0.0,
+            )
 
-                relavant_agent_tokens = [conflict_vehicle_token]
+
+            avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
+            inject_poly = Polygon(conflict_agent_to_insert.box.all_corners())
+            if self.remove_other_agents:
+                objects_to_avoid = list(STATIC_OBJECT_TYPES)
+            else:
+                objects_to_avoid = list(AGENT_TYPES | STATIC_OBJECT_TYPES) #grab anything we could crash into
+            avoid = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(objects_to_avoid)
+            for obj in avoid:
+                avoid_geoms.append(obj.box.geometry)
+            avoid_geoms = MultiPolygon(avoid_geoms)
+
+            if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other objects/agents
+                continue
+        
+            #now that we know there is room, we inject the conflict vehicle so we can check for occlusion
+            self.inject_candidate(conflict_agent_to_insert, conflict_vehicle_goal, runner, scenario.get_time_point(0))
+            
+            # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+            vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+            rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+            #print(rough_time_to_collision)
+            if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+                self.remove_candidate(conflict_agent_to_insert, runner)
+                continue
+        
+            relavant_agent_tokens = [conflict_vehicle_token]
+                        
+            agents_to_insert = [conflict_agent_to_insert]
+            goals_to_insert = [conflict_vehicle_goal]
+            time_points = [scenario.get_time_point(0)]
+            
+            #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
+            base_modifier_string = "_diverge_conflict_injection_and_occlusion_injection_"
+            if not self.remove_other_agents:
                 #check which vehicles are currently visible to the ego vehicle
                 manager = WedgeOcclusionManager(scenario)
                 visible_relavant_agents = set(relavant_agent_tokens).intersection(
                     manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
                 )
-        
-                agents_to_insert = [conflict_agent_to_insert]
-                goals_to_insert = [potential_conflict_vehicle_goal]
-                time_points = [scenario.get_time_point(0)]
-        
-                #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
-                base_modifier_string = "_diverge_conflict_injection_and_occlusion_injection_"
+
+            
                 if len(visible_relavant_agents) == 0:
                     num = 0
-                    modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                    modifier_string = base_modifier_string + str(num) + connector.id + "_natural_occlusion_"
                     new_sim_runner = copy.deepcopy(runner)
                     modification = DivergeConflictWithOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string, self.remove_other_agents)
                     modification.modify(new_sim_runner.simulation)
@@ -201,115 +181,118 @@ class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusio
                     # remove injected vehicle from original scenario
                     self.remove_candidate(conflict_agent_to_insert, runner)
                     continue
+        
+            #otherwise, we need to try to inject an occluder
+            object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
+            agents = []
+            if not self.remove_other_agents:
+                agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
+            agents.extend(agents_to_insert)
+
+            full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
+
+            if full_fov_poly.area == 0:
+                self.remove_candidate(conflict_agent_to_insert, runner)
+                continue
+        
+            centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status, None)
+            
+            #now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
+            potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
+                full_fov_poly
+            )
+            
+            if potential_occlusion_centerlines.is_empty:
+                self.remove_candidate(conflict_agent_to_insert, runner)
+                continue
+
+            discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
+            
+            # sample from around feasible points to introduce more variety of scenes we are able to create
+            potential_spawn_points = ( #TODO, maybe sample for each point after checking if original point is too close
+                discretized_points if (not self.ADD_NOISE)
+                else self.sample_around_points(discretized_points, self.SAMPLE_SPAWN_POINT_STDEV)
+            )
+            
+            avoid = runner.simulation._observations.get_observation().tracked_objects.tracked_objects #grab anything we could crash into
+            avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
+            for obj in avoid:
+                avoid_geoms.append(obj.box.geometry)
+            avoid_geoms.append(conflict_agent_to_insert.box.geometry) #dont want to crash into this either
+            avoid_geoms = MultiPolygon(avoid_geoms)
+            candidate_occluding_spawn_points = self._filter_to_valid_spawn_points(
+                potential_spawn_points,
+                avoid_geoms,
+                map_polys
+            )
+            
+            #now we try to inject the potential occluders with the goal of occluding our newly inseted relavant agents
+            modified_simulation_runners = []
+            modifier_number = 0
+            #check which vehicles are currently visible to the ego vehicle
+            manager = WedgeOcclusionManager(scenario)
+            visible_relavant_agents = set(relavant_agent_tokens).intersection(
+                manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
+            )
+            points_injected_at = MultiPoint()
+            iteration = runner.simulation._time_controller.get_iteration()
+            
+            for point in candidate_occluding_spawn_points:
+                # check if the point is too close to other injection sites
                 
-                #otherwise, we need to try to inject an occluder
-                object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
-                agents = []
-                if not self.remove_other_agents:
-                    agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
-                agents.extend(agents_to_insert)
-
-                full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
-
-                if full_fov_poly.area == 0:
+                dist = points_injected_at.distance(point)
+                if not math.isnan(dist) and dist < self.MIN_DISTANCE_BETWEEN_INJECTIONS:
+                    continue
+                # inject vehicle at point,
+                candidate, goal = self.generate_occlusion_candidate_diverge(point, runner, scenario.map_api, traffic_light_status, [conflict_agent_to_insert], [connector.id])
+                
+                if candidate is None:
                     continue
                 
-                centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
+                inject_poly = Polygon(candidate.box.all_corners())
+                if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
+                    continue
                 
-                #now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
-                potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
-                    full_fov_poly
-                )
+                self.inject_candidate(candidate, goal, runner, iteration.time_point)
+                # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
+                vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
+                rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+
+                if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
+                    #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
+                    self.remove_candidate(candidate, runner)
+                    continue
                 
-                if potential_occlusion_centerlines.is_empty:
-                    return []
-        
-                discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
-                
-                # sample from around feasible points to introduce more variety of scenes we are able to create
-                potential_spawn_points = ( #TODO, maybe sample for each point after checking if original point is too close
-                    discretized_points if (not self.ADD_NOISE)
-                    else self.sample_around_points(discretized_points, self.SAMPLE_SPAWN_POINT_STDEV)
-                )
-        
-                avoid = runner.simulation._observations.get_observation().tracked_objects.tracked_objects #grab anything we could crash into
-                avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
-                for obj in avoid:
-                    avoid_geoms.append(obj.box.geometry)
-                avoid_geoms.append(conflict_agent_to_insert.box.geometry) #dont want to crash into this either
-                avoid_geoms = MultiPolygon(avoid_geoms)
-                candidate_occluding_spawn_points = self._filter_to_valid_spawn_points(
-                    potential_spawn_points,
-                    avoid_geoms,
-                    map_polys
-                )
-        
-                #now we try to inject the potential occluders with the goal of occluding our newly inseted relavant agents
-                modified_simulation_runners = []
-                modifier_number = 0
-                #check which vehicles are currently visible to the ego vehicle
-                manager = WedgeOcclusionManager(scenario)
-                visible_relavant_agents = set(relavant_agent_tokens).intersection(
+                # check if new occlusion is created among relavant vehicles
+                new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
                     manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
                 )
-                points_injected_at = MultiPoint()
-                iteration = runner.simulation._time_controller.get_iteration()
-                for point in candidate_occluding_spawn_points:
-                    # check if the point is too close to other injection sites
-                    
-                    dist = points_injected_at.distance(point)
-                    if not math.isnan(dist) and dist < self.MIN_DISTANCE_BETWEEN_INJECTIONS:
-                        continue
-                    # inject vehicle at point,
-                    candidate, goal = self.generate_occlusion_candidate_diverge(point, runner, scenario.map_api, traffic_light_status, [conflict_agent_to_insert]) #diverge occlusions can be generated in a similar way to sequential occlusions
-                    
-                    if candidate is None:
-                        continue
-                    
-                    inject_poly = Polygon(candidate.box.all_corners())
-                    if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
-                        continue
-                    
-                    self.inject_candidate(candidate, goal, runner, iteration.time_point)
-                    # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
-                    vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
-                    rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
-                    if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
-                        #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
-                        self.remove_candidate(candidate, runner)
-                        continue
-                    
-                    # check if new occlusion is created among relavant vehicles
-                    new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                        manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
-                    )
-                    
-                    # remove injected vehicle from original scenario
-                    self.remove_candidate(candidate, runner)
-                    
-                    if len(visible_relavant_agents.difference(new_visible_relavant_agents)) > 0:
-                        new_sim_runner = copy.deepcopy(runner)
-                        ai = copy.deepcopy(agents_to_insert)
-                        gi = copy.deepcopy(goals_to_insert)
-                        ti = copy.deepcopy(time_points)
-                        ai.append(candidate)
-                        gi.append(goal)
-                        ti.append(iteration.time_point)
-                        
-                        modifier_string = base_modifier_string + str(modifier_number) + "_" + str(ego_speed_offset) + "_" + conflict_connector.id
-                        modification = DivergeConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string, self.remove_other_agents)
-                        modification.modify(new_sim_runner.simulation)
-                        new_sim_runner.simulation.modification = modification
-                        modified_simulation_runners.append(new_sim_runner)
-                        points_injected_at = points_injected_at.union(point)
-                        modifier_number += 1
                 
-                self.remove_candidate(conflict_agent_to_insert, runner)        
-                all_modified_simulation_runners.extend(modified_simulation_runners)
+                # remove injected vehicle from original scenario
+                self.remove_candidate(candidate, runner)
                 
+                if len(visible_relavant_agents.difference(new_visible_relavant_agents)) > 0:
+                    new_sim_runner = copy.deepcopy(runner)
+                    ai = copy.deepcopy(agents_to_insert)
+                    gi = copy.deepcopy(goals_to_insert)
+                    ti = copy.deepcopy(time_points)
+                    ai.append(candidate)
+                    gi.append(goal)
+                    ti.append(iteration.time_point)
+                    
+                    modifier_string = base_modifier_string + str(modifier_number) + connector.id
+                    modification = DivergeConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string, self.remove_other_agents)
+                    modification.modify(new_sim_runner.simulation)
+                    new_sim_runner.simulation.modification = modification
+                    modified_simulation_runners.append(new_sim_runner)
+                    points_injected_at = points_injected_at.union(point)
+                    modifier_number += 1
+            
+            self.remove_candidate(conflict_agent_to_insert, runner)
+            all_modified_simulation_runners.extend(modified_simulation_runners)
         return all_modified_simulation_runners
             
-    def generate_occlusion_candidate_diverge(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], optional_extra_agents: List[Agent] = []) -> Tuple[Agent, StateSE2]:
+    def generate_occlusion_candidate_diverge(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], optional_extra_agents: List[Agent] = [], segment_ids_to_avoid: List[str] = []) -> Tuple[Agent, StateSE2]:
         """We generate the agent state and goal pair for the occlusion agent for the diverge conflict
         :param point: xy coords of the injection point
         :param runner: SimulationRunner to inject into
@@ -425,10 +408,11 @@ class DivergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusio
                         return None, None
                     else:
                         for outgoing in temp.outgoing_edges:
-                            if outgoing.id not in [x.id for x in lane_level_route_plan]:
+                            #this line ensure that we diverge away from both the ego vehicle and the conflict vehicle
+                            if outgoing.id not in [x.id for x in lane_level_route_plan] and outgoing.id not in segment_ids_to_avoid:
                                 temp = outgoing
                                 break
-                goal_segment = temp 
+                goal_segment = temp
                 *_, last = goal_segment.baseline_path.linestring.coords #we use the last point in a linestring far away to start setting our goal
                 last = Point(last)
                 goal_point = Point2D(last.x, last.y)

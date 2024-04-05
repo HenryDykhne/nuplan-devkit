@@ -116,10 +116,11 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
             
             ego_speed = max(ego_agent.velocity.magnitude(), self.MIN_EGO_SPEED)
             time_to_conflict = ego_distance_to_conflict_point / ego_speed
-            for ego_speed_offset in self.SPEED_OFFSETS:
-                conflict_vehicle_speed = ego_speed + ego_speed_offset
-                if conflict_vehicle_speed < self.MIN_ALLOWED_SPEED or conflict_vehicle_speed > self.MAX_ALLOWED_SPEED:
-                    continue
+            
+            conflict_vehicle_speeds = list(dict.fromkeys([max(min(off + ego_speed, self.MAX_ALLOWED_SPEED), self.MIN_ALLOWED_SPEED) for off in self.SPEED_OFFSETS])) #this line takes the potential offsets and applies them to the starting ego speed with respect to the max and min. we clamp the values exeeding the limits to the max and mins and then remove duplicates
+            for conflict_vehicle_speed in conflict_vehicle_speeds:
+                ego_speed_offset = conflict_vehicle_speed - ego_speed
+                
                 distance_to_conflict_point_for_conflict_vehicle = conflict_vehicle_speed * time_to_conflict
                 distance_to_conflict_from_begining_of_conflict_connector = conflict_connector.baseline_path.get_nearest_arc_length_from_position(conflict_point)
                 distance_from_end_of_conflict_connector_parent_lane = distance_to_conflict_point_for_conflict_vehicle - distance_to_conflict_from_begining_of_conflict_connector
@@ -163,7 +164,7 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                 avoid_geoms = MultiPolygon(avoid_geoms)
 
                 if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other objects/agents
-                    return []
+                    continue
                 
                 #now that we know there is room, we inject the conflict vehicle so we can check for occlusion
                 self.inject_candidate(conflict_agent_to_insert, potential_conflict_vehicle_goal, runner, scenario.get_time_point(0))
@@ -177,11 +178,6 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                     continue
 
                 relavant_agent_tokens = [conflict_vehicle_token]
-                #check which vehicles are currently visible to the ego vehicle
-                manager = WedgeOcclusionManager(scenario)
-                visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                    manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
-                )
         
                 agents_to_insert = [conflict_agent_to_insert]
                 goals_to_insert = [potential_conflict_vehicle_goal]
@@ -189,17 +185,25 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
         
                 #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
                 base_modifier_string = "_merge_conflict_injection_and_occlusion_injection_"
-                if len(visible_relavant_agents) == 0:
-                    num = 0
-                    modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(ego_speed_offset) + "_" + conflict_connector.id
-                    new_sim_runner = copy.deepcopy(runner)
-                    modification = MergeConflictWithOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string, self.remove_other_agents)
-                    modification.modify(new_sim_runner.simulation)
-                    new_sim_runner.simulation.modification = modification
-                    all_modified_simulation_runners.append(new_sim_runner)
-                    # remove injected vehicle from original scenario
-                    self.remove_candidate(conflict_agent_to_insert, runner)
-                    continue
+                if not self.remove_other_agents:
+                    #check which vehicles are currently visible to the ego vehicle
+                    manager = WedgeOcclusionManager(scenario)
+                    visible_relavant_agents = set(relavant_agent_tokens).intersection(
+                        manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
+                    )
+                    
+                    
+                    if len(visible_relavant_agents) == 0:
+                        num = 0
+                        modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                        new_sim_runner = copy.deepcopy(runner)
+                        modification = MergeConflictWithOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string, self.remove_other_agents)
+                        modification.modify(new_sim_runner.simulation)
+                        new_sim_runner.simulation.modification = modification
+                        all_modified_simulation_runners.append(new_sim_runner)
+                        # remove injected vehicle from original scenario
+                        self.remove_candidate(conflict_agent_to_insert, runner)
+                        continue
                 
                 #otherwise, we need to try to inject an occluder
                 object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
@@ -211,6 +215,7 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                 full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
 
                 if full_fov_poly.area == 0:
+                    self.remove_candidate(conflict_agent_to_insert, runner)
                     continue
                 
                 centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
@@ -221,7 +226,8 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                 )
                 
                 if potential_occlusion_centerlines.is_empty:
-                    return []
+                    self.remove_candidate(conflict_agent_to_insert, runner)
+                    continue
         
                 discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
                 
@@ -305,13 +311,8 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                 
                 self.remove_candidate(conflict_agent_to_insert, runner)        
                 all_modified_simulation_runners.extend(modified_simulation_runners)
-                
-        for runner in all_modified_simulation_runners:
-            print(runner.simulation.modification.modifier_string)
         
-        a = [runner for runner in all_modified_simulation_runners if runner.simulation.modification.modifier_string == '_merge_conflict_injection_and_occlusion_injection_0_0.0_64500']
-        return a
-        #return all_modified_simulation_runners
+        return all_modified_simulation_runners
             
     def generate_occlusion_candidate_merge(self, point: Point, runner: SimulationRunner, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], optional_extra_agents: List[Agent] = []) -> Tuple[Agent, StateSE2]:
         """We generate the agent state and goal pair for the occlusion agent for the merge conflict
@@ -459,10 +460,7 @@ class MergeConflictWithOcclusionInjectionModification(AbstractModification):
     def modify(self, simulation: Simulation) -> None:
         if self.remove_other_agents:
             simulation._observations.remove_all_of_object_types_from_scene([TrackedObjectType.VEHICLE], simulation)
-            
-        
-        print([agent.metadata.track_token for agent in simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE])
-                        
+                                    
         for inserted_agent, goal_state, time_point in zip(self.inserted_agents, self.goal_states, self.time_points):
             simulation._observations.add_agent_to_scene(
                 inserted_agent, goal_state, time_point, simulation

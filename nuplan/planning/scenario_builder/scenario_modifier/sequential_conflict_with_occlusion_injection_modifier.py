@@ -59,8 +59,6 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         ego_object = scenario.get_ego_state_at_iteration(0)
         ego_agent = ego_object.agent
         
-        map_api = scenario.map_api
-        
         _, ego_lane_level_route_plan = runner.simulation._observations._get_roadblock_path(
                     ego_agent,
                     scenario.get_expert_goal_state()
@@ -171,6 +169,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
 
         if full_fov_poly.area == 0:
+            self.remove_candidate(conflict_agent_to_insert, runner)
             return []
         
         centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status, None)
@@ -181,6 +180,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         )
         
         if potential_occlusion_centerlines.is_empty:
+            self.remove_candidate(conflict_agent_to_insert, runner)
             return []
 
         discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)

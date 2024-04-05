@@ -305,8 +305,8 @@ class MLPlannerAgents(AbstractObservation):
             faux_ego_obervations.append(faux_ego_observation)
     
 
-        output_buffer = SimulationHistoryBuffer(deque(faux_ego_obervations), \
-                            deque(new_observations), \
+        output_buffer = SimulationHistoryBuffer(deque(faux_ego_obervations, maxlen=len(faux_ego_obervations)), \
+                            deque(new_observations, maxlen=len(new_observations)), \
                                 history.sample_interval)
 
         return output_buffer
@@ -342,7 +342,7 @@ class MLPlannerAgents(AbstractObservation):
         simulation._observations._static_agents = [a for a in simulation._observations._static_agents if a.metadata.track_token != agent.metadata.track_token]
         
         history_buffer = simulation._history_buffer
-        new_observation_buffer = deque()
+        new_observation_buffer = deque(maxlen=history_buffer.observation_buffer.maxlen)
         for observations in history_buffer.observation_buffer:
             tracks = []
             for track in observations.tracked_objects.tracked_objects:
@@ -387,7 +387,7 @@ class MLPlannerAgents(AbstractObservation):
             self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
         history_buffer = simulation._history_buffer
-        new_observation_buffer = deque()
+        new_observation_buffer = deque(maxlen=history_buffer.observation_buffer.maxlen)
 
         for ego_states, observations in zip(history_buffer.ego_state_buffer, history_buffer.observation_buffer):
             past_time_point = ego_states.time_point
@@ -478,7 +478,7 @@ class MLPlannerAgents(AbstractObservation):
             route_plan = [start_edge]
 
         route_plan = self._extend_path(route_plan, max_depth)
-        lane_level_route_plan = route_plan 
+        lane_level_route_plan = route_plan
         route_plan = [edge.get_roadblock_id() for edge in route_plan]
         route_plan = list(dict.fromkeys(route_plan))    #deduplicates
         
