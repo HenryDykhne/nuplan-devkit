@@ -197,7 +197,7 @@ class CrossConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                     
                     if len(visible_relavant_agents) == 0:
                         num = 0
-                        modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                        modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(round(ego_speed_offset, 1)) + "_" + conflict_connector.id
                         new_sim_runner = copy.deepcopy(runner)
                         modification = CrossConflictWithOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string, self.remove_other_agents)
                         modification.modify(new_sim_runner.simulation)
@@ -303,7 +303,7 @@ class CrossConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                         gi.append(goal)
                         ti.append(iteration.time_point)
                         
-                        modifier_string = base_modifier_string + str(modifier_number) + "_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                        modifier_string = base_modifier_string + str(modifier_number) + "_" + str(round(ego_speed_offset, 1)) + "_" + conflict_connector.id
                         modification = CrossConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string, self.remove_other_agents)
                         modification.modify(new_sim_runner.simulation)
                         new_sim_runner.simulation.modification = modification
@@ -311,7 +311,7 @@ class CrossConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                         points_injected_at = points_injected_at.union(point)
                         modifier_number += 1
                 
-                self.remove_candidate(conflict_agent_to_insert, runner)        
+                self.remove_candidate(conflict_agent_to_insert, runner)
                 all_modified_simulation_runners.extend(modified_simulation_runners)
                 
         return all_modified_simulation_runners

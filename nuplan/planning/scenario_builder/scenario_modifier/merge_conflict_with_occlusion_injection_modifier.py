@@ -195,7 +195,7 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                     
                     if len(visible_relavant_agents) == 0:
                         num = 0
-                        modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                        modifier_string = base_modifier_string + str(num) + "_natural_occlusion_" + str(round(ego_speed_offset, 1)) + "_" + conflict_connector.id
                         new_sim_runner = copy.deepcopy(runner)
                         modification = MergeConflictWithOcclusionInjectionModification(agents_to_insert, goals_to_insert, time_points, modifier_string, self.remove_other_agents)
                         modification.modify(new_sim_runner.simulation)
@@ -301,7 +301,7 @@ class MergeConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclusionI
                         gi.append(goal)
                         ti.append(iteration.time_point)
                         
-                        modifier_string = base_modifier_string + str(modifier_number) + "_" + str(ego_speed_offset) + "_" + conflict_connector.id
+                        modifier_string = base_modifier_string + str(modifier_number) + "_" + str(round(ego_speed_offset, 1)) + "_" + conflict_connector.id
                         modification = MergeConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string, self.remove_other_agents)
                         modification.modify(new_sim_runner.simulation)
                         new_sim_runner.simulation.modification = modification

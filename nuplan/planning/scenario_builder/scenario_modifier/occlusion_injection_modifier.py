@@ -42,7 +42,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     TOLERANCE = 0.2
     MAP_RADIUS = 200.0
     SAMPLE_SPAWN_POINT_STDEV = 0.20
-    ADD_NOISE = True
+    ADD_NOISE = False
     MINIMUM_SPAWNING_DISTANCE = 1.0 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
     MIN_DISTANCE_BETWEEN_INJECTIONS = 2.0
     LEAD_FOLLOW_AGENT_RANGE = 20.0 #agents we copy the speed and goal from that we are leading or following
