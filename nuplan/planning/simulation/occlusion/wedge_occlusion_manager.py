@@ -46,6 +46,7 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
     # wedge based occlusion implementation. about half as fast and the occlusions flicker more but it should scale better if you have tons of occluders
     def _determine_occlusions(self, observer: AgentState, targets:List[AgentState]) -> set:
         #start = time.time()
+        
         rads = np.linspace(0, 2 * math.pi,self.num_wedges + 1)
         wedges = dict()
 
@@ -54,14 +55,10 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
             d2 = rads[i+1]
             p1 = (self.horizon_threshold * math.cos(d1), self.horizon_threshold * math.sin(d1))
             p2 = (self.horizon_threshold * math.cos(d2), self.horizon_threshold * math.sin(d2))
-            wedge = Polygon([self.ORIG, p1, p2])
+            wedges[i] = Polygon([self.ORIG, p1, p2])
 
-            wedges[i] = wedge
-
-        sorted_targets = sorted(targets, key=lambda x: (x.center.x - observer.center.x)**2 + (x.center.y - observer.center.y)**2) #sorts closest to farthest
-
+        sorted_targets = sorted(targets, key=lambda t: (t.center.x - observer.center.x)**2 + (t.center.y - observer.center.y)**2) #sorts closest to farthest
         not_occluded = set() # Visible track token set
-
         for target in sorted_targets:
             wedge_hits = 0
             corners_list = target.box.all_corners() #Return 4 corners of oriented box (FL, RL, RR, FR) Point2D
@@ -107,31 +104,31 @@ class WedgeOcclusionManager(AbstractOcclusionManager):
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
-                        wedge_hits += 1 
+                        wedge_hits += 1
                         if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                             to_remove.add(wedge_idx)
                         else:
                             not_occluded.add(target.metadata.track_token) # we assume objects that are not vehicles like pedestriens are visible if even a single wedge hits them (a compromise for the sake of speed)
                             break
-                    else: 
+                    else:
                         counterclockwise_off_target = True
 
                 wedge_idx = (index_of_correct_wedge - i) % self.num_wedges # fan out clockwise
                 if wedge_idx in wedges:
                     wedge = wedges[wedge_idx]
                     if wedge.intersects(target_poly):
-                        wedge_hits += 1 
+                        wedge_hits += 1
                         if target.tracked_object_type == TrackedObjectType.VEHICLE or target.tracked_object_type == TrackedObjectType.EGO:
                             to_remove.add(wedge_idx)
                         else:
                             not_occluded.add(target.metadata.track_token) # we assume objects that are not vehicles like pedestriens are visible if even a single wedge hits them (a compromise for the sake of speed)
                             break
-                    else: 
+                    else:
                         clockwise_off_target = True
-
+            
             if wedge_hits >= self.required_hits:
                 not_occluded.add(target.metadata.track_token)
-                
+
             for key in to_remove:
                 del wedges[key]
 

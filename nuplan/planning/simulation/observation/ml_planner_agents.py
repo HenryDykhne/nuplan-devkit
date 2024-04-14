@@ -1,5 +1,6 @@
 from collections import deque
 from copy import deepcopy
+import copy
 import math
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -95,7 +96,7 @@ class MLPlannerAgents(AbstractObservation):
         from vehicles at simulation start if it does not exist.
         """
 
-        if not self._agents:
+        if self._agents is None:
             self._agents = {}
             for agent in self._scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_type(TrackedObjectType.VEHICLE):
 
@@ -172,7 +173,7 @@ class MLPlannerAgents(AbstractObservation):
                 (next_iteration.time_s - self._trajectory_cache[agent_token][0]) < self._optimization_cfg.subsample_inference_frequency and \
             (((agent_data['ego_state'].center.x - history.current_state[0].center.x) ** 2 + \
                 (agent_data['ego_state'].center.y - history.current_state[0].center.y) ** 2) ** 0.5) >= self._optimization_cfg.subsample_full_inference_distance:
-                     trajectory = self._trajectory_cache[agent_token][1]
+                    trajectory = self._trajectory_cache[agent_token][1]
             else:
                 history_input = self._build_history_input(agent_token, agent_data['ego_state'], history)
 
@@ -304,18 +305,44 @@ class MLPlannerAgents(AbstractObservation):
             faux_ego_obervations.append(faux_ego_observation)
     
 
-        output_buffer = SimulationHistoryBuffer(deque(faux_ego_obervations), \
-                            deque(new_observations), \
+        output_buffer = SimulationHistoryBuffer(deque(faux_ego_obervations, maxlen=len(faux_ego_obervations)), \
+                            deque(new_observations, maxlen=len(new_observations)), \
                                 history.sample_interval)
 
         return output_buffer
     
+    def remove_all_of_object_types_from_scene(self, agent_types: List[TrackedObjectType], simulation: Simulation):
+        """Removes all agents of a given type from the scene
+        """
+        if simulation._history_buffer is None:
+            simulation._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                simulation._history_buffer_size, simulation._scenario, simulation._observations.observation_type()
+            )
+        objects = copy.deepcopy(simulation._observations.get_observation().tracked_objects.tracked_objects)
+        for obs in simulation.history_buffer.observation_buffer:
+            objects.extend(copy.deepcopy(obs.tracked_objects.tracked_objects))
+        
+        deduped_objects = list({track.metadata.track_token:track for track in objects}.values())
+
+        for obj in deduped_objects:
+            if obj.tracked_object_type in agent_types:
+                simulation._observations.remove_agent_from_scene(obj, simulation)
+    
     def remove_agent_from_scene(self, agent: Agent, simulation: Simulation):
         """Removes an agent from the scene
         """
-        simulation._observations._get_agents().pop(agent.metadata.track_token)
+        if simulation._history_buffer is None:
+            simulation._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                simulation._history_buffer_size, simulation._scenario, simulation._observations.observation_type()
+            )
+        
+        if agent.metadata.track_token in simulation._observations._get_agents():
+            simulation._observations._get_agents().pop(agent.metadata.track_token)
+
+        simulation._observations._static_agents = [a for a in simulation._observations._static_agents if a.metadata.track_token != agent.metadata.track_token]
+        
         history_buffer = simulation._history_buffer
-        new_observation_buffer = deque()
+        new_observation_buffer = deque(maxlen=history_buffer.observation_buffer.maxlen)
         for observations in history_buffer.observation_buffer:
             tracks = []
             for track in observations.tracked_objects.tracked_objects:
@@ -324,7 +351,8 @@ class MLPlannerAgents(AbstractObservation):
 
             new_observation_buffer.append(DetectionsTracks(TrackedObjects(tracks)))
             
-        simulation._observations._ego_state_history.pop(agent.metadata.track_token)
+        if agent.metadata.track_token in simulation._observations._ego_state_history:
+            simulation._observations._ego_state_history.pop(agent.metadata.track_token)
         
         simulation._history_buffer = SimulationHistoryBuffer(history_buffer.ego_state_buffer, new_observation_buffer, history_buffer.sample_interval)
 
@@ -359,7 +387,7 @@ class MLPlannerAgents(AbstractObservation):
             self._agents[agent.metadata.track_token]['planner'].initialize(planner_init)
 
         history_buffer = simulation._history_buffer
-        new_observation_buffer = deque()
+        new_observation_buffer = deque(maxlen=history_buffer.observation_buffer.maxlen)
 
         for ego_states, observations in zip(history_buffer.ego_state_buffer, history_buffer.observation_buffer):
             past_time_point = ego_states.time_point
@@ -450,7 +478,7 @@ class MLPlannerAgents(AbstractObservation):
             route_plan = [start_edge]
 
         route_plan = self._extend_path(route_plan, max_depth)
-        lane_level_route_plan = route_plan 
+        lane_level_route_plan = route_plan
         route_plan = [edge.get_roadblock_id() for edge in route_plan]
         route_plan = list(dict.fromkeys(route_plan))    #deduplicates
         

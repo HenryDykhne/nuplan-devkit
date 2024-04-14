@@ -16,7 +16,7 @@ from nuplan.common.actor_state.tracked_objects import TrackedObject, TrackedObje
 from nuplan.planning.simulation.observation.observation_type import DetectionsTracks
 from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import Lane, LaneConnector, LaneGraphEdgeMapObject
-from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
+from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLayer, TrafficLightStatusType
 from nuplan.database.nuplan_db_orm.traffic_light_status import TrafficLightStatus
 from nuplan.database.utils.measure import angle_diff
 
@@ -42,9 +42,9 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
     TOLERANCE = 0.2
     MAP_RADIUS = 200.0
     SAMPLE_SPAWN_POINT_STDEV = 0.20
-    ADD_NOISE = True
+    ADD_NOISE = False
     MINIMUM_SPAWNING_DISTANCE = 1.0 # REPLACE THIS CONSTANT with a function of the speed of the agent you are checking
-    MIN_DISTANCE_BETWEEN_INJECTIONS = 1.0
+    MIN_DISTANCE_BETWEEN_INJECTIONS = 2.0
     LEAD_FOLLOW_AGENT_RANGE = 20.0 #agents we copy the speed and goal from that we are leading or following
     SIDE_AGENT_RANGE = 10.0 #agents we check exist in case we cant find a goal from leading and following agents, just to make sure there is something that could be worth occluding in a lane beside us
     EXTENSION_STEPS = 3
@@ -526,12 +526,12 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         ]
     )
     
-    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], lane_objects_to_prune_by = List[LaneGraphEdgeMapObject]) -> Tuple[MultiLineString, MultiPolygon]:
+    def get_map_geometry(self, ego_object: AgentState, map_api: AbstractMap, traffic_light_status: Dict[TrafficLightStatusType, List[str]], lane_objects_to_prune_by: List[LaneGraphEdgeMapObject] = None) -> Tuple[MultiLineString, MultiPolygon]:
         """Helper function to get map geometry from a map.
         :param ego_object: ego object to center map on
         :param map_api: what it says on the tin
         :param traffic_light_status: traffic light status at the time of injection
-        :param ids_to_prune_by: list of laneobjectd that must be matched to if we want to keep a particular lane centerline. lane connectors must match exactly and lanes must have their parent roadblock match to allow for occlusions by cars in adjacent lanes
+        :param ids_to_prune_by: list of laneobjects that must be matched to if we want to keep a particular lane centerline. lane connectors must match exactly and lanes must have their parent roadblock match to allow for occlusions by cars in adjacent lanes. if it is None, we do not prune
         :return: A multilinestring of all the centerlines, and a multipolygon of all the map polygons
         """
         
@@ -542,15 +542,31 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         map_polys = []
         for layer in layers:
             for obj in map_object_dict[layer]:
-                if isinstance(obj, LaneConnector):
-                    if (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
+                if lane_objects_to_prune_by is not None:
+                    if isinstance(obj, LaneConnector) and (obj.id not in [lane_object.id for lane_object in lane_objects_to_prune_by]):
                         continue
-                else: #if its a lane
-                    if (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
+                    elif (obj.parent.id not in [lane_object.parent.id for lane_object in lane_objects_to_prune_by]): #parent block must match
                         continue
-                if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):
-                    centerlines.append(obj.baseline_path.linestring)
-                    map_polys.append(obj.polygon)
+                    
+                if isinstance(obj, LaneConnector) and obj.turn_type == LaneConnectorType.STRAIGHT: # if its a straight line connector, we dont want to consider it if it intersects with a another straight that has a green light
+                    straight_crossing_green_straight = False
+                    for con in map_object_dict[SemanticMapLayer.LANE_CONNECTOR]:
+                        if obj.id != con.id and con.id in traffic_light_status[TrafficLightStatusType.GREEN] and obj.baseline_path.linestring.intersects(con.baseline_path.linestring):
+                            straight_crossing_green_straight = True
+                    if straight_crossing_green_straight:
+                        continue
+                    
+                if (obj.id not in traffic_light_status[TrafficLightStatusType.RED]):#if the lane connector is red, we dont want to consider it
+                    #if the lane has any neighbors that are red we dont want to consider it
+                    if len(obj.incoming_edges) == 0:
+                        continue
+                    list_of_lists_of_outgoing_edges = [edge.outgoing_edges for edge in obj.incoming_edges[0].parent.interior_edges]
+                    combined = list(itertools.chain.from_iterable(list_of_lists_of_outgoing_edges))
+                    #if all([(edge.id not in traffic_light_status[TrafficLightStatusType.RED]) for edge in obj.parent.interior_edges]) or \
+                    if all([edge not in traffic_light_status[TrafficLightStatusType.RED] for edge in combined]) or \
+                    (isinstance(obj, LaneConnector) and obj.turn_type != LaneConnectorType.STRAIGHT): #unless its not a straight line connector. then it gets a pass since turns can be protected under red lights
+                        centerlines.append(obj.baseline_path.linestring)
+                        map_polys.append(obj.polygon)
         centerlines = union_all(centerlines)
         map_polys = union_all(map_polys)
         return centerlines, map_polys
@@ -565,11 +581,17 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         """
         agents = [ego_agent] + other_agents
         steps = int(horizon / interval)
+        # print(len(agents))
+        # print(steps)
+        # for agent in agents:
+        #     print(agent.center.x, agent.center.y, agent.velocity.x, agent.velocity.y)
+        #     print(agent.center.x, agent.center.y, agent.velocity.magnitude() * math.cos(agent.center.heading), agent.velocity.magnitude() * math.sin(agent.center.heading))
+
         for step in range(1, steps):
             for agent1, agent2 in itertools.combinations(agents, 2):
                 time = step * interval
-                curr_poly1 = affinity.translate(agent1.box.geometry, xoff=agent1.velocity.x * time, yoff=agent1.velocity.y * time)
-                curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.x * time, yoff=agent2.velocity.y * time)
+                curr_poly1 = affinity.translate(agent1.box.geometry, xoff=agent1.velocity.magnitude() * math.cos(agent1.center.heading) * time, yoff=agent1.velocity.magnitude() * math.sin(agent1.center.heading) * time)
+                curr_poly2 = affinity.translate(agent2.box.geometry, xoff=agent2.velocity.magnitude() * math.cos(agent2.center.heading) * time, yoff=agent2.velocity.magnitude() * math.sin(agent2.center.heading) * time)
                 if curr_poly1.intersects(curr_poly2):
                     return time
         return None

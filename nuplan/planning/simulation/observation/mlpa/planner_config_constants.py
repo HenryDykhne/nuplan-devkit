@@ -33,7 +33,7 @@ PDM_BATCH_IDM_CONFIG = {
     "fallback_target_velocity":15.0,#15.0
     "min_gap_to_lead_agent":1.0,#1.0
     "headway_time":1.5,#1.5
-    "accel_max":3.0,#1.5
+    "accel_max":1.5,#1.5
     "decel_max":3.0#3.0
 }
 

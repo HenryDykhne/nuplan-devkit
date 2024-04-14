@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Tuple, Type
 
+from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.callback.abstract_callback import AbstractCallback
 from nuplan.planning.simulation.callback.multi_callback import MultiCallback
@@ -112,9 +113,10 @@ class Simulation:
         self.reset()
 
         # Initialize history from scenario
-        self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
-            self._history_buffer_size, self._scenario, self._observations.observation_type()
-        )
+        if self._history_buffer is None:
+            self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                self._history_buffer_size, self._scenario, self._observations.observation_type()
+            )
 
         # Initialize observations
         self._observations.initialize()
@@ -147,6 +149,7 @@ class Simulation:
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
 
         history_input = self._history_buffer
+            
         if self._occlusion_manager is not None:
             history_input = self._occlusion_manager.occlude_input(history_input)
 
