@@ -155,15 +155,18 @@ def build_simulations(
         num_modifiable = 0
         original_num_runners = len(simulations)
         if 'second_testing_round' in cfg and cfg.second_testing_round:
-            # we need to reload the modifications from the first round of testing
-            assert 'scenarios_to_check_in_alternate_regime' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
+            if 'modification_file_path' in cfg:
+                modification_file_path = cfg.modification_file_path
+            else:
+                # we need to reload the modifications from the first round of testing
+                assert 'scenarios_to_check' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
             with open(modification_file_path, 'rb') as f:
                 modifications_for_second_testing_round = pickle.load(f)
                 for sim in simulations:
                     if sim.simulation.scenario.token in modifications_for_second_testing_round:
                         num_modifiable += 1
                         for mod in modifications_for_second_testing_round[sim.simulation.scenario.token]:
-                            if sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check_in_alternate_regime:
+                            if 'scenarios_to_check' not in cfg or sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check:
                                 clone = copy.deepcopy(sim)
                                 clone.simulation.modification = mod
                                 clone.scenario._modifier = mod.modifier_string
