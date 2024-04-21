@@ -3,9 +3,11 @@ import matplotlib.pyplot as plt
 from typing import List
 import numpy as np  # Import numpy for numerical operations
 import matplotlib.colors as mcolors
+import matplotlib.patheffects as pe
 import scipy.stats as stats
 import re
 import os
+
 
 pd.set_option("display.max_colwidth", 400)
 pd.set_option("display.max_columns", None)
@@ -217,7 +219,8 @@ def plot_diff(
                 ha="center",
                 va="bottom",
                 fontsize=scaling_factor,
-                color="grey",
+                color="white",
+                path_effects=[pe.withStroke(linewidth=4, foreground="black")]
             )
 
     # Set x-axis ticks and labels

@@ -113,8 +113,8 @@ def build_simulations(
             observations: AbstractObservation = build_observations(cfg.observation, scenario=scenario)
 
             # Occlusions
-            if 'occlusion' in cfg.keys() and cfg.occlusion:
-                occlusion_manager: AbstractOcclusionManager = build_occlusion_manager(cfg.occlusion, scenario=scenario)
+            if 'occlusion_cfg' in cfg.keys() and cfg.occlusion_cfg.occlusion:
+                occlusion_manager: AbstractOcclusionManager = build_occlusion_manager(cfg.occlusion_cfg, scenario=scenario)
             else:
                 occlusion_manager = None
 
