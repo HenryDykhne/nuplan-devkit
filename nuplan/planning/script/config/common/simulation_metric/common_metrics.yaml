@@ -4,3 +4,4 @@ defaults:
       - ego_expert_l2_error_statistics
       - ego_expert_l2_error_with_yaw_statistics
       - is_relavant_agent_occluded_statistics
+      - can_scenario_be_made_dangerous_statistics
