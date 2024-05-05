@@ -193,7 +193,7 @@ class OcclusionInjectionModifier(AbstractScenarioModifier):
         return modified_simulation_runners
     
     def how_does_ego_cross_intersection(self, runner: SimulationRunner ) -> LaneConnector:
-        """This returns the lane connector that the ego vehicle uses to cross an intersection. If the ego vehicle is already inside the intersection, it returns None.
+        """This returns the lane connector that the ego vehicle uses to cross an intersection.
         :param runner: runner that containst the scenario to use to determine how the ego crosses the intersection
         :return: LaneConnector that the ego uses to cross the intersection
         """
