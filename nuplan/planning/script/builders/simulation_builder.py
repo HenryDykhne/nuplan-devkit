@@ -171,14 +171,14 @@ def build_simulations(
                             if 'scenarios_to_check' not in cfg or sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check:
                                 clone = copy.deepcopy(sim)
                                 
-                                occmod = OcclusionInjectionModifier()
-                                crossing_lane_connector = occmod.how_does_ego_cross_intersection(sim)
-                                road_block_ids.append(crossing_lane_connector.get_roadblock_id())
-                                
                                 clone.simulation.modification = mod
                                 clone.scenario._modifier = mod.modifier_string
                                 offshoot_scenario_simulations.append(clone)
                                 original_modified_tokens.append(sim.simulation.scenario.token)
+                                
+                                occmod = OcclusionInjectionModifier()
+                                crossing_lane_connector = occmod.how_does_ego_cross_intersection(sim)
+                                road_block_ids.append(crossing_lane_connector.get_roadblock_id())
                 original_modified_tokens = list(dict.fromkeys(original_modified_tokens)) #deduplicate
                 
                 print('# roadblock ids', len(road_block_ids))
