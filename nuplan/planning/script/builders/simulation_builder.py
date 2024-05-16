@@ -10,6 +10,7 @@ from omegaconf import DictConfig
 from nuplan.common.utils.distributed_scenario_filter import DistributedMode, DistributedScenarioFilter
 from nuplan.planning.scenario_builder.nuplan_db.nuplan_scenario_builder import NuPlanScenarioBuilder
 from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
+from nuplan.planning.scenario_builder.scenario_modifier.occlusion_injection_modifier import OcclusionInjectionModifier
 from nuplan.planning.script.builders.metric_builder import build_metrics_engines
 from nuplan.planning.script.builders.observation_builder import build_observations
 from nuplan.planning.script.builders.occlusion_manager_builder import build_occlusion_manager
@@ -113,8 +114,8 @@ def build_simulations(
             observations: AbstractObservation = build_observations(cfg.observation, scenario=scenario)
 
             # Occlusions
-            if 'occlusion' in cfg.keys() and cfg.occlusion:
-                occlusion_manager: AbstractOcclusionManager = build_occlusion_manager(cfg.occlusion, scenario=scenario)
+            if 'occlusion_cfg' in cfg.keys() and cfg.occlusion_cfg.occlusion:
+                occlusion_manager: AbstractOcclusionManager = build_occlusion_manager(cfg.occlusion_cfg, scenario=scenario)
             else:
                 occlusion_manager = None
 
@@ -152,24 +153,39 @@ def build_simulations(
         modification_file_path = 'modifications_for_second_testing_round.pkl'
         offshoot_scenario_simulations = []
         original_modified_tokens = []
+        road_block_ids = []
         num_modifiable = 0
         original_num_runners = len(simulations)
         if 'second_testing_round' in cfg and cfg.second_testing_round:
-            # we need to reload the modifications from the first round of testing
-            assert 'scenarios_to_check_in_alternate_regime' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
+            if 'modification_file_path' in cfg:
+                modification_file_path = cfg.modification_file_path
+            else:
+                # we need to reload the modifications from the first round of testing
+                assert 'scenarios_to_check' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
             with open(modification_file_path, 'rb') as f:
                 modifications_for_second_testing_round = pickle.load(f)
                 for sim in simulations:
                     if sim.simulation.scenario.token in modifications_for_second_testing_round:
                         num_modifiable += 1
                         for mod in modifications_for_second_testing_round[sim.simulation.scenario.token]:
-                            if sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check_in_alternate_regime:
+                            if 'scenarios_to_check' not in cfg or sim.simulation.scenario.token + mod.modifier_string in cfg.scenarios_to_check:
                                 clone = copy.deepcopy(sim)
+                                
                                 clone.simulation.modification = mod
                                 clone.scenario._modifier = mod.modifier_string
                                 offshoot_scenario_simulations.append(clone)
                                 original_modified_tokens.append(sim.simulation.scenario.token)
+                                
+                                occmod = OcclusionInjectionModifier()
+                                crossing_lane_connector = occmod.how_does_ego_cross_intersection(sim)
+                                road_block_ids.append(crossing_lane_connector.get_roadblock_id())
                 original_modified_tokens = list(dict.fromkeys(original_modified_tokens)) #deduplicate
+                
+                print('# roadblock ids', len(road_block_ids))
+                road_block_ids = list(dict.fromkeys(road_block_ids))#deduplicate
+                print('# unique roadblock ids', len(road_block_ids))
+                print('unique roadblock ids', road_block_ids)
+                
         else:
             num_gpus = cfg.number_of_gpus_allocated_per_simulation
             num_cpus = cfg.number_of_cpus_allocated_per_simulation

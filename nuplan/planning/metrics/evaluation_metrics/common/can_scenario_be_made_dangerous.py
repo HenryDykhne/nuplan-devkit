@@ -163,7 +163,32 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         
         return False
 
+    def time_till_unmasked(self, history: SimulationHistory, scenario: AbstractScenario) -> float:
+        """
+        Returns the estimated metric
+        :param history: History from a simulation engine
+        :param scenario: Scenario running this metric
+        :return the time till the vehicle is visible to ego.
+        """
+        list_of_occlusion_masks = history.occlusion_masks
+        if list_of_occlusion_masks is None:
+            return 0.0
+        masks = {k:list_of_occlusion_masks[k] for k in list_of_occlusion_masks if k>scenario.start_time.time_us}
+        keys = sorted(masks.keys())
+        sorted_masks = []
+        for key in keys:
+            sorted_masks.append(masks[key])
+    
+        time = 0.0
+        for mask in sorted_masks:
+            time += 1.0
+            if any(['conflict_inserted' in token for token in mask]):
+                break
+        
+        time = time * history.interval_seconds
+        return time
 
+        
     def compute(self, history: SimulationHistory, scenario: AbstractScenario) -> List[MetricStatistics]:
         """
         Returns the estimated metric
@@ -172,12 +197,19 @@ class CanScenarioBeMadeDangerousStatistics(MetricBase):
         :return the estimated metric.
         """
         can_scenario_be_made_dangerous = self.can_scenario_be_made_dangerous(history=history, scenario=scenario)
+        time_till_unmasked = self.time_till_unmasked(history=history, scenario=scenario)
         statistics = [
             Statistic(
                 name='can_scenario_be_made_dangerous',
                 unit=MetricStatisticsType.BOOLEAN.unit,
                 value=can_scenario_be_made_dangerous,
                 type=MetricStatisticsType.BOOLEAN,
+            ),
+            Statistic(
+                name='time_till_unmasked',
+                unit='seconds',
+                value=time_till_unmasked,
+                type=MetricStatisticsType.VALUE,
             )
         ]
 

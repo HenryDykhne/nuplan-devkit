@@ -54,7 +54,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
         if crossing_lane_connector.id in traffic_light_status[TrafficLightStatusType.RED]:
             #print(f'Warning: Crossing lane connector {crossing_lane_connector.id} in scenario {scenario.token} has a red traffic light')
-            return []   
+            return []
         
         ego_object = scenario.get_ego_state_at_iteration(0)
         ego_agent = ego_object.agent
@@ -137,7 +137,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
         goals_to_insert = [conflict_vehicle_goal]
         time_points = [scenario.get_time_point(0)]
         
-        #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
+        
         base_modifier_string = "_sequential_conflict_injection_and_occlusion_injection_"
         if not self.remove_other_agents:
             #check which vehicles are currently visible to the ego vehicle
@@ -146,7 +146,7 @@ class SequentialConflictWithOcclusionInjectionModifier(ConflictInjectionAndOcclu
                 manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
             )
 
-            
+            #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
             if len(visible_relavant_agents) == 0:
                 num = 0
                 modifier_string = base_modifier_string + str(num) + "_natural_occlusion_"

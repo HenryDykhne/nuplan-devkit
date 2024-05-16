@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from dataclasses import dataclass
+import math
 from typing import Dict, List, Optional, Set, Tuple
 
 from shapely.geometry import LineString
@@ -32,6 +35,9 @@ class CollisionData:
     collision_ego_delta_v: float  # Energy in collision
     collision_type: CollisionType  # Type of collision
     tracked_object_type: TrackedObjectType  # Track type
+    collision_angle: float  # Angle of collision (this compares the headings of the two objects)
+    collision_impact_angle: float  # Angle of impact (this one asks what side we actually got hit on)
+    time: float  # Time of collision
 
 
 @dataclass
@@ -110,9 +116,15 @@ def find_new_collisions(
             collision_delta_v = ego_delta_v_collision(ego_state, tracked_object)
             # Classify collision type
             collision_type = _get_collision_type(ego_state, tracked_object)
-
+            # Record collision angle used to calculate collision energy (this one just compares the headings)
+            collision_angle = ego_state.rear_axle.heading - tracked_object.center.heading
+            # Record relative collision impact angle (this one asks what side we actually got hit on)
+            ax = tracked_object.center.x - ego_state.center.x
+            ay = tracked_object.center.y - ego_state.center.y
+            collision_impact_angle = math.atan2(ay, ax) - ego_state.center.heading
+            
             collisions_id_data[tracked_object.track_token] = CollisionData(
-                collision_delta_v, collision_type, tracked_object.tracked_object_type
+                collision_delta_v, collision_type, tracked_object.tracked_object_type, collision_angle, collision_impact_angle, ego_state.time_seconds
             )
 
     return collided_track_ids, collisions_id_data
@@ -162,7 +174,7 @@ def classify_at_fault_collisions(
 
 def reformat_collisions(
     all_collisions: List[Collisions],
-) -> Tuple[List[int], Dict[TrackedObjectType, List[float]]]:
+) -> Tuple[List[int], Dict[TrackedObjectType, List[float]], Dict[TrackedObjectType, List[CollisionData]]]:
     """
     Return a list of timestamps that collisions happened and a dictionary of track types and collision energy.
 
@@ -170,6 +182,7 @@ def reformat_collisions(
     :return: A list of timestamps that at collisions happened and a dictionary of track types and collision energy.
     """
     ego_collisions: Dict[TrackedObjectType, List[float]] = defaultdict(list)
+    ego_collision_data: Dict[TrackedObjectType, List[CollisionData]] = defaultdict(list)
     timestamps_ego_collisions: List[int] = []
     for collision in all_collisions:
         timestamp = collision.timestamp
@@ -178,8 +191,8 @@ def reformat_collisions(
             timestamps_ego_collisions.append(timestamp)
             # Update the list of collision energies for the collided track type
             ego_collisions[collision_data.tracked_object_type].append(collision_data.collision_ego_delta_v)
-
-    return timestamps_ego_collisions, ego_collisions
+            ego_collision_data[collision_data.tracked_object_type].append(collision_data)
+    return timestamps_ego_collisions, ego_collisions, ego_collision_data
 
 
 class EgoAtFaultCollisionStatistics(MetricBase):
@@ -291,7 +304,7 @@ class EgoAtFaultCollisionStatistics(MetricBase):
             all_collisions, timestamps_in_common_or_connected_route_objs
         )
         
-        self.timestamps_ego_collisions, self.all_ego_collisions = reformat_collisions(all_collisions)
+        self.timestamps_ego_collisions, self.all_ego_collisions, self.ego_collision_data = reformat_collisions(all_collisions)
 
         number_of_at_fault_collisions = sum(
             len(track_collisions) for track_collisions in self.all_at_fault_collisions.values()
@@ -328,7 +341,7 @@ class EgoAtFaultCollisionStatistics(MetricBase):
             ),
         ]
         statistics.extend(get_fault_type_statistics(self.all_at_fault_collisions))
-        statistics.extend(get_type_statistics(self.all_ego_collisions))
+        statistics.extend(get_type_statistics(self.all_ego_collisions, self.ego_collision_data))
 
         # Save to re-use in high level metrics
         self.results = self._construct_metric_results(

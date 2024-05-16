@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import IntEnum
 from typing import Dict, List
 
@@ -7,6 +9,9 @@ from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.ego_state import EgoState
 from nuplan.common.actor_state.scene_object import SceneObject
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from nuplan.planning.metrics.evaluation_metrics.common.no_ego_at_fault_collisions import CollisionData
 from nuplan.planning.metrics.metric_result import MetricStatisticsType, Statistic
 
 VRU_types = [
@@ -118,13 +123,16 @@ def get_fault_type_statistics(
 
 def get_type_statistics(
     all_ego_collisions: Dict[TrackedObjectType, List[float]],
+    ego_collision_data: Dict[TrackedObjectType, List[CollisionData]],
 ) -> List[Statistic]:
     """
     :param all_ego_collisions: Dict of ego collisions.
+    :param ego_collision_data: Dict of ego collisions with all relavant data.
     :return: List of Statistics for all collision track types.
     """
     statistics = []
     track_types_collisions_energy_dict: Dict[str, List[float]] = {}
+    track_types_collisions_data_dict: Dict[str, List[CollisionData]] = {}
 
     for collision_track_type, collision_name in zip(
         [VRU_types, [TrackedObjectType.VEHICLE], object_types], ['VRUs', 'vehicles', 'objects']
@@ -133,6 +141,11 @@ def get_type_statistics(
             colision_energy
             for track_type in collision_track_type
             for colision_energy in all_ego_collisions[track_type]
+        ]
+        track_types_collisions_data_dict[collision_name] = [
+            colision_data
+            for track_type in collision_track_type
+            for colision_data in ego_collision_data[track_type]
         ]
         statistics.extend(
             [
@@ -146,6 +159,7 @@ def get_type_statistics(
         )
     for collision_name, track_types_collisions_energy in track_types_collisions_energy_dict.items():
         if len(track_types_collisions_energy) > 0:
+            first_col_idx = np.argmin([col_data.time for col_data in track_types_collisions_data_dict[collision_name]])
             statistics.extend(
                 [
                     Statistic(
@@ -166,6 +180,24 @@ def get_type_statistics(
                         value=np.mean(track_types_collisions_energy),
                         type=MetricStatisticsType.MEAN,
                     ),
+                    Statistic(
+                        name=f'first_ego_collision_energy_with_{collision_name}',
+                        unit="meters_per_second",
+                        value=track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v,
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'relative_impact_angle_at_first_ego_collision_with_{collision_name}',
+                        unit="radians",
+                        value=track_types_collisions_data_dict[collision_name][first_col_idx].collision_impact_angle,
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'relative_heading_angle_at_first_ego_collision_with_{collision_name}',
+                        unit="radians",
+                        value=track_types_collisions_data_dict[collision_name][first_col_idx].collision_angle,
+                        type=MetricStatisticsType.VALUE,
+                    )
                 ]
             )
     return statistics
