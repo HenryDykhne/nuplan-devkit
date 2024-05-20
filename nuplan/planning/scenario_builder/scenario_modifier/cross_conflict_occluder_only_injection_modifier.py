@@ -1,7 +1,9 @@
 from __future__ import annotations
 import copy
 import math
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
+
+import numpy as np
 
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.oriented_box import OrientedBox
@@ -15,10 +17,13 @@ from nuplan.common.maps.abstract_map_objects import LaneConnector, LaneGraphEdge
 from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLayer
 from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, MultiPoint
 
+from nuplan.database.utils.measure import angle_diff
+from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.scenario_builder.scenario_modifier.cross_conflict_with_occlusion_injection_modifier import CrossConflictWithOcclusionInjectionModification
 
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
 from nuplan.planning.scenario_builder.scenario_modifier.conflict_vehicle_injection_and_occlusion_injection import ConflictInjectionAndOcclusionInjectionModifier
+from nuplan.planning.simulation.observation.mlpa.max_depth_breadth_first_search import MaxDepthBreadthFirstSearch
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 
 from nuplan.planning.simulation.runner.simulations_runner import SimulationRunner
@@ -39,7 +44,6 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
         all_modified_simulation_runners = []
         ego_object = scenario.get_ego_state_at_iteration(0)
         ego_agent = ego_object.agent
-        traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
 
         crossing_lane_connector = self.how_does_ego_cross_intersection(runner)
         traffic_light_status = self.get_traffic_light_status_at_iteration(0, scenario)
@@ -52,8 +56,6 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
         if crossing_lane_connector is None or crossing_lane_connector.id in traffic_light_status[TrafficLightStatusType.RED] or ego_lane_level_route_plan is None:
             return [] 
 
-
-        
         first = crossing_lane_connector.baseline_path.linestring.coords[0]
         first = Point2D(*first)
         
@@ -63,25 +65,47 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
         conflicting_connectors_without_shared_incoming_edge = [connector for connector in conflicting_connectors if not (connector.incoming_edges[0].id == crossing_lane_connector.incoming_edges[0].id)]
         # removing merging connectors
         conflicting_connectors_without_shared_incoming_or_outgoing_edge = [connector for connector in conflicting_connectors_without_shared_incoming_edge if not (connector.outgoing_edges[0].id == crossing_lane_connector.outgoing_edges[0].id)]
-        valid_conflicting_connectors = [connector for connector in conflicting_connectors_without_shared_incoming_or_outgoing_edge if connector.id not in traffic_light_status[TrafficLightStatusType.RED]]
+        valid_conflicting_connectors = [connector.id for connector in conflicting_connectors_without_shared_incoming_or_outgoing_edge if connector.id not in traffic_light_status[TrafficLightStatusType.RED] and connector.id != crossing_lane_connector.id]
+        valid_conflicting_connectors = set(valid_conflicting_connectors)
     
         if len(valid_conflicting_connectors) == 0:
             return []
-
+        
+        for i, map_object in enumerate(ego_lane_level_route_plan):
+            if map_object.id == crossing_lane_connector.id:
+                break
+            if i > 3:
+                return []
+            
         manager = WedgeOcclusionManager(scenario)
 
         base_modifier_string = "cross_conflict_occluder_only_injection_"
-
 
         vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
         visible_agents = [agent for agent in vehicle_agents if agent.metadata.track_token in manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())]
         
 
         for conflict_agent in visible_agents:
-                                        
+            conflict_agent_goal = self._get_historical_agent_goal(scenario, conflict_agent, 0)
+
+            start_edge, _ = self._get_target_state_segment(conflict_agent.center, map_api)
+            end_edge, _ = self._get_target_state_segment(conflict_agent_goal, map_api)
+
+            if start_edge is None:
+                continue
+            
+            if end_edge is not None:
+                gs = MaxDepthBreadthFirstSearch(start_edge)
+                route_plan, _ = gs.search(end_edge, 10)
+            else:
+                route_plan = [start_edge]
+
+            if all([connector.id not in valid_conflicting_connectors for connector in route_plan]):
+                continue
+
             conflict_agent_tokens = [conflict_agent.metadata.track_token]
 
-            #otherwise, we need to try to inject an occluder
+            # we need to try to inject an occluder
             object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
             agents = []
             agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
@@ -93,7 +117,7 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
             
             centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
             
-            #now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
+            # now that we have the right centerlines, we can find the potential occlusion points. here we make sure our centerlines are within the full_fov_poly
             potential_occlusion_centerlines: MultiLineString = centerlines.intersection(
                 full_fov_poly
             )
@@ -173,7 +197,7 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
                     gi = [goal]
                     ti = [iteration.time_point]
 
-                    modifier_string = base_modifier_string + str(modifier_number) + "_"# + conflict_connector.id
+                    modifier_string = base_modifier_string + str(modifier_number) + "_"+candidate.metadata.track_token# + "_" + conflict_connector.id
                     modification = CrossConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string)
                     modification.modify(new_sim_runner.simulation)
                     new_sim_runner.simulation.modification = modification
@@ -319,3 +343,46 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
 
         return agent_to_insert, goal
     
+
+    def _get_historical_agent_goal(self, scenario: AbstractScenario, agent: Agent, iteration_index: int):
+        """
+        Gets the last known state of an agent and returns it.
+        """
+
+        for frame in range(scenario.get_number_of_iterations()-1, iteration_index, -1):
+            last_scenario_frame = scenario.get_tracked_objects_at_iteration(frame)
+            for track in last_scenario_frame.tracked_objects.tracked_objects:
+                if track.metadata.track_token == agent.metadata.track_token:
+                    return track.center
+
+        return None
+    
+    def _get_target_state_segment(self, target_state: StateSE2, map_api: AbstractMap
+    ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
+        """
+        Gets the map object that the target state is on and the progress along the segment.
+        :param target_state: The target_state of interest.
+        :param map_api: An AbstractMap instance.
+        :return: GraphEdgeMapObject and progress along the segment. If no map object is found then None.
+        """
+        
+        if map_api.is_in_layer(target_state, SemanticMapLayer.LANE):
+            layer = SemanticMapLayer.LANE
+        elif map_api.is_in_layer(target_state, SemanticMapLayer.INTERSECTION):
+            layer = SemanticMapLayer.LANE_CONNECTOR
+        else:
+            return None, None
+
+        segments: List[LaneGraphEdgeMapObject] = map_api.get_all_map_objects(target_state, layer)
+        if not segments:
+            return None, None
+
+        # Get segment with the closest heading to the agent
+        heading_diff = [
+            angle_diff(segment.baseline_path.get_nearest_pose_from_position(target_state).heading, target_state.heading, math.pi*2)
+            for segment in segments
+        ]
+        closest_segment = segments[np.argmin(np.abs(heading_diff))]
+
+        progress = closest_segment.baseline_path.get_nearest_arc_length_from_position(target_state)
+        return closest_segment, progress
