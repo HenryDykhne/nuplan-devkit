@@ -29,11 +29,10 @@ from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOc
 from nuplan.planning.simulation.runner.simulations_runner import SimulationRunner
 
 class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionModifier):
-    CONFLICT_RADIUS = 50.0
-    SPEED_OFFSETS = [-5.0, 0.0, 5.0]
+    CONFLICT_RADIUS = 20.0
     MIN_EGO_SPEED = 1.0
-    MAX_ALLOWED_SPEED = 15.0
-    MIN_ALLOWED_SPEED = 1.0
+    BFS_DEPTH = 10
+    MIN_CONNECTOR_TIME = 3
     
     def __init__(self, cfg):
         super().__init__() #maybe we will need this later
@@ -74,7 +73,7 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
         for i, map_object in enumerate(ego_lane_level_route_plan):
             if map_object.id == crossing_lane_connector.id:
                 break
-            if i > 3:
+            if i > self.MIN_CONNECTOR_TIME:
                 return []
             
         manager = WedgeOcclusionManager(scenario)
@@ -88,6 +87,9 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
         for conflict_agent in visible_agents:
             conflict_agent_goal = self._get_historical_agent_goal(scenario, conflict_agent, 0)
 
+            if not self._is_within_conflict_radius(scenario, conflict_agent, crossing_lane_connector, valid_conflicting_connectors, map_api, self.CONFLICT_RADIUS):
+                continue
+
             start_edge, _ = self._get_target_state_segment(conflict_agent.center, map_api)
             end_edge, _ = self._get_target_state_segment(conflict_agent_goal, map_api)
 
@@ -96,11 +98,13 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
             
             if end_edge is not None:
                 gs = MaxDepthBreadthFirstSearch(start_edge)
-                route_plan, _ = gs.search(end_edge, 10)
+                route_plan, route_plan_found = gs.search(end_edge, self.BFS_DEPTH)
+                if not route_plan_found:
+                    continue
             else:
-                route_plan = [start_edge]
+                continue
 
-            if all([connector.id not in valid_conflicting_connectors for connector in route_plan]):
+            if all([connector.id not in valid_conflicting_connectors for connector in route_plan[:self.MIN_CONNECTOR_TIME]]):
                 continue
 
             conflict_agent_tokens = [conflict_agent.metadata.track_token]
@@ -356,6 +360,21 @@ class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionM
                     return track.center
 
         return None
+    
+    def _is_within_conflict_radius(self, scenario: AbstractScenario, conflict_agent: Agent, crossing_lane_connector, valid_conflicting_connectors, map_api, conflict_radius: float) -> bool:
+        for frame in range(scenario.get_number_of_iterations()):
+            last_scenario_frame = scenario.get_tracked_objects_at_iteration(frame)
+            ego_agent = scenario.get_ego_state_at_iteration(frame)
+            for track in last_scenario_frame.tracked_objects.tracked_objects:
+                if track.metadata.track_token == conflict_agent.metadata.track_token:
+                    if ego_agent.center.distance_to(track.center) < conflict_radius:
+                        track_connector = self._get_target_state_segment(track.center, map_api)
+                        ego_agent_connector = self._get_target_state_segment(ego_agent.center, map_api)
+                        if track_connector[0] is not None and ego_agent_connector[0] is not None:
+                            if track_connector[0].id in valid_conflicting_connectors and ego_agent_connector[0].id == crossing_lane_connector.id:
+                                return True
+
+        return False
     
     def _get_target_state_segment(self, target_state: StateSE2, map_api: AbstractMap
     ) -> Tuple[Optional[LaneGraphEdgeMapObject], Optional[float]]:
