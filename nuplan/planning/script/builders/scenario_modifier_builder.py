@@ -12,7 +12,7 @@ from nuplan.planning.scenario_builder.scenario_modifier.sequential_conflict_with
 from nuplan.planning.scenario_builder.scenario_modifier.cross_conflict_with_occlusion_injection_modifier import CrossConflictWithOcclusionInjectionModifier
 from nuplan.planning.scenario_builder.scenario_modifier.merge_conflict_with_occlusion_injection_modifier import MergeConflictWithOcclusionInjectionModifier
 from nuplan.planning.scenario_builder.scenario_modifier.diverge_conflict_with_occlusion_injection_modifier import DivergeConflictWithOcclusionInjectionModifier
-from nuplan.planning.scenario_builder.scenario_modifier.cross_conflict_with_occlusion_injection_modifier_copy import CrossConflictWithOcclusionInjectionModifierCopy
+from nuplan.planning.scenario_builder.scenario_modifier.cross_conflict_occluder_only_injection_modifier import CrossConflictOccluderOnlyInjection
 
 
 def build_scenario_modifiers(scenario_modifier_types: List[str], cfg: DictConfig = None) -> List[AbstractScenarioModifier]:
@@ -30,8 +30,8 @@ def build_scenario_modifiers(scenario_modifier_types: List[str], cfg: DictConfig
             modifiers.append(SequentialConflictWithOcclusionInjectionModifier(cfg))
         elif type == "cross-conflict-with-occlusion-injection":
             modifiers.append(CrossConflictWithOcclusionInjectionModifier(cfg))
-        elif type == "cross-conflict-with-occlusion-injection-copy":
-            modifiers.append(CrossConflictWithOcclusionInjectionModifierCopy(cfg))
+        elif type == "cross-conflict-occluder-only-injection-modifier":
+            modifiers.append(CrossConflictOccluderOnlyInjection(cfg))
         elif type == "merge-conflict-with-occlusion-injection":
             modifiers.append(MergeConflictWithOcclusionInjectionModifier(cfg))
         elif type == "diverge-conflict-with-occlusion-injection":

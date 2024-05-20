@@ -1,37 +1,29 @@
 from __future__ import annotations
-from collections import defaultdict
 import copy
 import math
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple
 
-import numpy as np
 from nuplan.common.actor_state.agent import Agent
 from nuplan.common.actor_state.oriented_box import OrientedBox
 from nuplan.common.actor_state.scene_object import SceneObjectMetadata
-from nuplan.common.actor_state.state_representation import Point2D, StateSE2, StateVector2D, TimePoint
+from nuplan.common.actor_state.state_representation import Point2D, StateSE2, StateVector2D
 from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
-from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, STATIC_OBJECT_TYPES, TrackedObjectType
+from nuplan.common.actor_state.tracked_objects_types import AGENT_TYPES, TrackedObjectType
 
 from nuplan.common.maps.abstract_map import AbstractMap
 from nuplan.common.maps.abstract_map_objects import LaneConnector, LaneGraphEdgeMapObject
 from nuplan.common.maps.maps_datatypes import LaneConnectorType, SemanticMapLayer
-from nuplan.database.utils.measure import angle_diff
-from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, LineString, MultiPoint, GeometryCollection
-from shapely import union_all
-from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
+from shapely.geometry import Polygon, Point, MultiPolygon, MultiLineString, MultiPoint
 
 from nuplan.planning.scenario_builder.scenario_modifier.cross_conflict_with_occlusion_injection_modifier import CrossConflictWithOcclusionInjectionModification
 
-from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification, AbstractScenarioModifier
 from nuplan.common.maps.maps_datatypes import SemanticMapLayer, TrafficLightStatusType
 from nuplan.planning.scenario_builder.scenario_modifier.conflict_vehicle_injection_and_occlusion_injection import ConflictInjectionAndOcclusionInjectionModifier
-from nuplan.planning.scenario_builder.scenario_modifier.occlusion_injection_modifier import OcclusionInjectionModifier
 from nuplan.planning.simulation.occlusion.wedge_occlusion_manager import WedgeOcclusionManager
 
 from nuplan.planning.simulation.runner.simulations_runner import SimulationRunner
-from nuplan.planning.simulation.simulation import Simulation
 
-class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclusionInjectionModifier):
+class CrossConflictOccluderOnlyInjection(ConflictInjectionAndOcclusionInjectionModifier):
     CONFLICT_RADIUS = 50.0
     SPEED_OFFSETS = [-5.0, 0.0, 5.0]
     MIN_EGO_SPEED = 1.0
@@ -76,32 +68,27 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
         if len(valid_conflicting_connectors) == 0:
             return []
 
+        manager = WedgeOcclusionManager(scenario)
+
+        base_modifier_string = "cross_conflict_occluder_only_injection_"
+
 
         vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if agent.tracked_object_type == TrackedObjectType.VEHICLE]
-
-
-        for conflict_agent_to_insert in vehicle_agents:
-            
-                                        
-            relavant_agent_tokens = [conflict_agent_to_insert.metadata.track_token]
+        visible_agents = [agent for agent in vehicle_agents if agent.metadata.track_token in manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())]
         
-            #if all relavant vehicles are already occluded, then we dont need to try to inject an occludor
-            base_modifier_string = "_cross_occlusion_injection_"
-            #check which vehicles are currently visible to the ego vehicle
-            manager = WedgeOcclusionManager(scenario)
-            visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
-            )
+
+        for conflict_agent in visible_agents:
+                                        
+            conflict_agent_tokens = [conflict_agent.metadata.track_token]
 
             #otherwise, we need to try to inject an occluder
             object_types = [TrackedObjectType.VEHICLE, TrackedObjectType.BICYCLE]
             agents = []
             agents = scenario.initial_tracked_objects.tracked_objects.get_tracked_objects_of_types(object_types)
 
-            full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, relavant_agent_tokens)
+            full_fov_poly = self.generate_full_fov_polygon(ego_agent, agents, conflict_agent_tokens)
 
             if full_fov_poly.area == 0:
-                self.remove_candidate(conflict_agent_to_insert, runner)
                 continue
             
             centerlines, map_polys = self.get_map_geometry(ego_agent, scenario.map_api, traffic_light_status)
@@ -112,7 +99,6 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
             )
             
             if potential_occlusion_centerlines.is_empty:
-                self.remove_candidate(conflict_agent_to_insert, runner)
                 continue
 
             discretized_points = self.discretize_centerline_segments(potential_occlusion_centerlines)
@@ -127,7 +113,7 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
             avoid_geoms = [ego_agent.box.geometry]#to ensure ego gets added to the geometry since it is not a tracked object
             for obj in avoid:
                 avoid_geoms.append(obj.box.geometry)
-            avoid_geoms.append(conflict_agent_to_insert.box.geometry) #dont want to crash into this either
+            avoid_geoms.append(conflict_agent.box.geometry) #dont want to crash into this either
             avoid_geoms = MultiPolygon(avoid_geoms)
             candidate_occluding_spawn_points = self._filter_to_valid_spawn_points(
                 potential_spawn_points,
@@ -139,12 +125,11 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
             modified_simulation_runners = []
             modifier_number = 0
             #check which vehicles are currently visible to the ego vehicle
-            manager = WedgeOcclusionManager(scenario)
-            visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
-            )
+            visible_agent_tokens = set([agent.metadata.track_token for agent in visible_agents])
+
             points_injected_at = MultiPoint()
             iteration = runner.simulation._time_controller.get_iteration()
+
             for point in candidate_occluding_spawn_points:
                 # check if the point is too close to other injection sites
                 
@@ -152,43 +137,43 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
                 if not math.isnan(dist) and dist < self.MIN_DISTANCE_BETWEEN_INJECTIONS:
                     continue
                 # inject vehicle at point,
-                candidate, goal = self.generate_occlusion_candidate_cross(point, runner, scenario.map_api, traffic_light_status, [conflict_agent_to_insert])
+                candidate, goal = self.generate_occlusion_candidate_cross(point, runner, scenario.map_api, traffic_light_status, [conflict_agent])
                 
                 if candidate is None:
                     continue
                 
                 inject_poly = Polygon(candidate.box.all_corners())
+
                 if inject_poly.intersects(avoid_geoms.buffer(self.MINIMUM_SPAWNING_DISTANCE)): #if injected agent intersects with other agents
                     continue
                 
                 self.inject_candidate(candidate, goal, runner, iteration.time_point)
+
                 # for the agent we are about to insert, we want to make sure it has a reasonable time to collision with any vehicle in the scene
                 vehicle_agents = [agent for agent in runner.simulation._observations.get_observation().tracked_objects.tracked_objects if \
                                     agent.tracked_object_type == TrackedObjectType.VEHICLE]
+                
                 rough_time_to_collision = self.calculate_rough_min_time_to_collision(ego_agent, vehicle_agents)
+
                 if rough_time_to_collision is not None and rough_time_to_collision < self.MIN_ALLOWED_TIME_TO_COLLISION:
                     #print(f'Warning: vehicle in scenario {scenario.token} is has too low a time to collision')
                     self.remove_candidate(candidate, runner)
                     continue
                 
                 # check if new occlusion is created among relavant vehicles
-                new_visible_relavant_agents = set(relavant_agent_tokens).intersection(
-                    manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation())
+                new_visible_relavant_agents = manager._compute_visible_agents(ego_object, runner.simulation._observations.get_observation()
                 )
                 
                 # remove injected vehicle from original scenario
                 self.remove_candidate(candidate, runner)
                 
-                if len(visible_relavant_agents.difference(new_visible_relavant_agents)) > 0:
+                if len(visible_agent_tokens.difference(new_visible_relavant_agents)) > 0:
                     new_sim_runner = copy.deepcopy(runner)
-                    ai = copy.deepcopy(agents_to_insert)
-                    gi = copy.deepcopy(goals_to_insert)
-                    ti = copy.deepcopy(time_points)
-                    ai.append(candidate)
-                    gi.append(goal)
-                    ti.append(iteration.time_point)
-                    
-                    modifier_string = base_modifier_string + str(modifier_number) + "_" + str(round(ego_speed_offset, 1)) + "_" + conflict_connector.id
+                    ai = [candidate]
+                    gi = [goal]
+                    ti = [iteration.time_point]
+
+                    modifier_string = base_modifier_string + str(modifier_number) + "_"# + conflict_connector.id
                     modification = CrossConflictWithOcclusionInjectionModification(ai, gi, ti, modifier_string)
                     modification.modify(new_sim_runner.simulation)
                     new_sim_runner.simulation.modification = modification
@@ -196,7 +181,6 @@ class CrossConflictWithOcclusionInjectionModifierCopy(ConflictInjectionAndOcclus
                     points_injected_at = points_injected_at.union(point)
                     modifier_number += 1
             
-            self.remove_candidate(conflict_agent_to_insert, runner)
             all_modified_simulation_runners.extend(modified_simulation_runners)
                     
         return all_modified_simulation_runners
