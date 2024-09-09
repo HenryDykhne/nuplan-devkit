@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+import math
 from typing import Dict, List
 
 import numpy as np
@@ -66,6 +67,120 @@ def ego_delta_v_collision(
 
     return ego_mass_ratio * velocity_component
 
+def get_pdof(ego_state: EgoState, scene_object: SceneObject) -> float:
+    """
+    Compute the PDOF (principal direction of force) for the collision.
+    :param ego_state: The state of ego.
+    :param scene_object: The scene_object ego is colliding with.
+    :return The PDOF measure for the collision.
+    """
+    scene_object_speed = scene_object.velocity.magnitude() if isinstance(scene_object, Agent) else 0
+    scene_object_velocity = (scene_object_speed * np.cos(scene_object.center.heading), scene_object_speed * np.sin(scene_object.center.heading))
+    
+    ego_speed = ego_state.dynamic_car_state.speed
+    ego_velocity = (ego_speed * np.cos(ego_state.rear_axle.heading), ego_speed * np.sin(ego_state.rear_axle.heading))
+    
+    return math.atan2(ego_velocity[1] - scene_object_velocity[1], ego_velocity[0] - scene_object_velocity[0]) - math.atan2(ego_velocity[1], ego_velocity[0])
+
+def get_probability_of_mais3(collision_delta_v: float, pdof: float, role: str = 'driver') -> float:
+    """
+    Compute the probability of MAIS3 (Maximum Abbreviated Injury Scale 3) for the collision.
+    :param collision_delta_v: The delta V measure for the collision.
+    :param pdof: The PDOF (principal direction of force) for the collision.
+    :return The probability of MAIS3 for the collision.
+    """
+
+    #imputed version MAIS3+ coefs
+    INTERCEPT = -9.333
+    COS_PDOF = 0.363
+    SIN_PDOF = -0.346
+    COS_2_PDOF = -0.253
+    SIN_2_PDOF = 0.205
+    DELTA_V = 0.094
+    OBJECT_HIT_SUV_TRUCK_VAN = 0.199
+    OBJECT_HIT_LARGE = 1.362
+    OBJECT_HIT_OTHER = 0.740
+    BODY_TYPE_SUV_TRUCK_VAN = -0.065
+    UNBELTED = 1.667
+    OTHER_BELT = 0.954
+    FEMALE = 0.185
+    REAR_SEAT = -0.143
+    ROLE_PASSENGER = 0.310
+    AGE = 0.040
+    MODEL_YEAR_2010 = -0.020
+    COS_PDOF_DELTA_V = 0.003
+    SIN_PDOF_DELTA_V = -0.003
+    COS_2_PDOF_DELTA_V = -0.014
+    SIN_2_PDOF_DELTA_V = -0.005
+
+    delta_v = collision_delta_v * 3.6 # change in speed between after and before impact (km/h)
+    if role == 'driver':
+        rear_seat = 0 # sitting in rear seat?
+        role_passenger = 0 # not the driver?
+    elif role == 'passenger':
+        rear_seat = 0
+        role_passenger = 1
+    else: #rear seat passenger
+        rear_seat = 1
+        role_passenger = 1
+
+    mais3_logit = INTERCEPT
+
+    mais3_logit += np.cos(pdof) * COS_PDOF
+    mais3_logit += np.sin(pdof) * SIN_PDOF
+    mais3_logit += np.cos(2 * pdof) * COS_2_PDOF
+    mais3_logit += np.sin(2 * pdof) * SIN_2_PDOF
+    mais3_logit += delta_v * DELTA_V
+    mais3_logit += 1 * OBJECT_HIT_SUV_TRUCK_VAN
+    mais3_logit += 0 * OBJECT_HIT_LARGE
+    mais3_logit += 0 * OBJECT_HIT_OTHER
+    mais3_logit += 1 * BODY_TYPE_SUV_TRUCK_VAN
+    mais3_logit += 0 * UNBELTED
+    mais3_logit += 0 * OTHER_BELT
+    mais3_logit += 0.54 * FEMALE
+    mais3_logit += rear_seat * REAR_SEAT 
+    mais3_logit += role_passenger * ROLE_PASSENGER
+    mais3_logit += 41 * AGE
+    mais3_logit += 0 * MODEL_YEAR_2010
+    mais3_logit += np.cos(pdof) * delta_v * COS_PDOF_DELTA_V
+    mais3_logit += np.sin(pdof) * delta_v * SIN_PDOF_DELTA_V
+    mais3_logit += np.cos(2 * pdof) * delta_v * COS_2_PDOF_DELTA_V
+    mais3_logit += np.sin(2 * pdof) * delta_v * SIN_2_PDOF_DELTA_V
+
+    e_logit = np.exp(mais3_logit)
+    mais3 = e_logit / (1 + e_logit)
+    return mais3
+    
+def get_severity_class(velocity_range: float, collision_impact_angle: float) -> int:
+    if abs(collision_impact_angle) < 0.38: #front
+        if velocity_range <= 1.11: #4 km/h
+            return 0
+        elif velocity_range <= 5.56: #20 km/h
+            return 1
+        elif velocity_range <= 11.11: #40 km/h
+            return 2
+        else:
+            return 3
+    elif abs(collision_impact_angle) > np.pi - 0.38: #back
+        if velocity_range <= 1.11:  #4 km/h
+            return 0
+        elif velocity_range <= 5.56: #20 km/h
+            return 1
+        elif velocity_range <= 11.11: #40 km/h
+            return 2
+        else:
+            return 3
+    else: #side
+        if velocity_range <= 0.56: #2 km/h
+            return 0
+        elif velocity_range <= 2.22: #8 km/h
+            return 1
+        elif velocity_range <= 4.44: #16 km/h
+            return 2
+        else:
+            return 3
+
+    
 
 def get_fault_type_statistics(
     all_at_fault_collisions: Dict[TrackedObjectType, List[float]],
@@ -197,7 +312,62 @@ def get_type_statistics(
                         unit="radians",
                         value=track_types_collisions_data_dict[collision_name][first_col_idx].collision_angle,
                         type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'pdof_at_first_ego_collision_with_{collision_name}',
+                        unit="radians",
+                        value=track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof,
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_driver_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'driver'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_passenger_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'passenger'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_backseat_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'backseat'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_worst_case_driver_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(2 * track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'driver'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_worst_case_passenger_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(2 * track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'passenger'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'mais3+_worst_case_backseat_at_first_ego_collision_with_{collision_name}',
+                        unit="probability",
+                        value=get_probability_of_mais3(2 * track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_pdof, 'backseat'),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(
+                        name=f'severity_class_at_first_ego_collision_with_{collision_name}',
+                        unit="severity_class",
+                        value=get_severity_class(track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_impact_angle),
+                        type=MetricStatisticsType.VALUE,
+                    ),
+                    Statistic(#we always assume that the two vehicles weight the same ammount in the prior calculation. here, we assume that the other vehicle is much more massive
+                        name=f'severity_class_worst_case_at_first_ego_collision_with_{collision_name}',
+                        unit="severity_class",
+                        value=get_severity_class(2 * track_types_collisions_data_dict[collision_name][first_col_idx].collision_ego_delta_v, track_types_collisions_data_dict[collision_name][first_col_idx].collision_impact_angle),
+                        type=MetricStatisticsType.VALUE,
                     )
+    
                 ]
             )
     return statistics

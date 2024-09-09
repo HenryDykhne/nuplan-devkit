@@ -18,6 +18,8 @@ from nuplan.planning.metrics.utils.collision_utils import (
     CollisionType,
     ego_delta_v_collision,
     get_fault_type_statistics,
+    get_probability_of_mais3,
+    get_pdof,
     get_type_statistics,
 )
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
@@ -37,6 +39,7 @@ class CollisionData:
     tracked_object_type: TrackedObjectType  # Track type
     collision_angle: float  # Angle of collision (this compares the headings of the two objects)
     collision_impact_angle: float  # Angle of impact (this one asks what side we actually got hit on)
+    collision_pdof: float  # Principal direction of force
     time: float  # Time of collision
 
 
@@ -114,6 +117,8 @@ def find_new_collisions(
             collided_track_ids.add(tracked_object.track_token)
             # Calculate energy at the time of collision
             collision_delta_v = ego_delta_v_collision(ego_state, tracked_object)
+            # get principal direction of force
+            collision_pdof = get_pdof(ego_state, tracked_object)
             # Classify collision type
             collision_type = _get_collision_type(ego_state, tracked_object)
             # Record collision angle used to calculate collision energy (this one just compares the headings)
@@ -124,7 +129,7 @@ def find_new_collisions(
             collision_impact_angle = math.atan2(ay, ax) - ego_state.center.heading
             
             collisions_id_data[tracked_object.track_token] = CollisionData(
-                collision_delta_v, collision_type, tracked_object.tracked_object_type, collision_angle, collision_impact_angle, ego_state.time_seconds
+                collision_delta_v, collision_type, tracked_object.tracked_object_type, collision_angle, collision_impact_angle, collision_pdof, ego_state.time_seconds
             )
 
     return collided_track_ids, collisions_id_data

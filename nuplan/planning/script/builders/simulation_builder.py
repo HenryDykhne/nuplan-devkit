@@ -153,7 +153,6 @@ def build_simulations(
         modification_file_path = 'modifications_for_second_testing_round.pkl'
         offshoot_scenario_simulations = []
         original_modified_tokens = []
-        road_block_ids = []
         num_modifiable = 0
         original_num_runners = len(simulations)
         if 'second_testing_round' in cfg and cfg.second_testing_round:
@@ -176,15 +175,8 @@ def build_simulations(
                                 offshoot_scenario_simulations.append(clone)
                                 original_modified_tokens.append(sim.simulation.scenario.token)
                                 
-                                occmod = OcclusionInjectionModifier()
-                                crossing_lane_connector = occmod.how_does_ego_cross_intersection(sim)
-                                road_block_ids.append(crossing_lane_connector.get_roadblock_id())
                 original_modified_tokens = list(dict.fromkeys(original_modified_tokens)) #deduplicate
                 
-                print('# roadblock ids', len(road_block_ids))
-                road_block_ids = list(dict.fromkeys(road_block_ids))#deduplicate
-                print('# unique roadblock ids', len(road_block_ids))
-                print('unique roadblock ids', road_block_ids)
                 
         else:
             num_gpus = cfg.number_of_gpus_allocated_per_simulation
