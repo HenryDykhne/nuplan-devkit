@@ -34,6 +34,42 @@ if os.path.basename(CONFIG_PATH) != 'simulation':
 CONFIG_NAME = 'default_simulation'
 
 
+def build_simulation_runners(cfg: DictConfig, planners: Optional[Union[AbstractPlanner, List[AbstractPlanner]]] = None):
+    # Fix random seed
+    pl.seed_everything(cfg.seed, workers=True)
+
+    profiler_name = 'building_simulation'
+    common_builder = set_up_common_builder(cfg=cfg, profiler_name=profiler_name)
+
+    # Build simulation callbacks
+    callbacks_worker_pool = build_callbacks_worker(cfg)
+    callbacks = build_simulation_callbacks(cfg=cfg, output_dir=common_builder.output_dir, worker=callbacks_worker_pool)
+
+    # Remove planner from config to make sure run_simulation does not receive multiple planner specifications.
+    if planners and 'planner' in cfg.keys():
+        logger.info('Using pre-instantiated planner. Ignoring planner in config')
+        OmegaConf.set_struct(cfg, False)
+        cfg.pop('planner')
+        OmegaConf.set_struct(cfg, True)
+
+    # Construct simulations
+    if isinstance(planners, AbstractPlanner):
+        planners = [planners]
+
+    runners = build_simulations(
+        cfg=cfg,
+        callbacks=callbacks,
+        worker=common_builder.worker,
+        pre_built_planners=planners,
+        callbacks_worker=callbacks_worker_pool,
+    )
+
+    if common_builder.profiler:
+        # Stop simulation construction profiling
+        common_builder.profiler.save_profiler(profiler_name)
+
+    return runners, common_builder, cfg
+
 def run_simulation(cfg: DictConfig, planners: Optional[Union[AbstractPlanner, List[AbstractPlanner]]] = None) -> None:
     """
     Execute all available challenges simultaneously on the same scenario. Helper function for main to allow planner to
@@ -70,7 +106,6 @@ def run_simulation(cfg: DictConfig, planners: Optional[Union[AbstractPlanner, Li
         pre_built_planners=planners,
         callbacks_worker=callbacks_worker_pool,
     )
-
     if common_builder.profiler:
         # Stop simulation construction profiling
         common_builder.profiler.save_profiler(profiler_name)

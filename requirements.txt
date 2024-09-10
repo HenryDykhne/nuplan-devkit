@@ -33,7 +33,7 @@ pyogrio # A performant backend for geopandas
 pyquaternion>=0.9.5  # Used widely, avoid known bug with quaternion slerp
 pytest    # Used widely
 rasterio  # Used in GpkgMapsDB.py
-ray # Used widely
+ray==2.5.1 # Used widely
 requests  # Used in BlobStore classes
 retry
 rtree # Used in occupancy maps
@@ -46,7 +46,7 @@ SQLAlchemy==1.4.27  # older versions don't work with some table definitions
 sympy  # Use for symbolic algebra
 testbook  # Used in testing jupyter notebooks
 tornado  # Used in nuboard.py
-threadpoolctl==3.2.0s
+threadpoolctl==3.2.0
 tqdm  # Used widely
 typer # Used for cli
 ujson  # Used in serialiation_callback.py

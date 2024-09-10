@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.controller.abstract_controller import AbstractEgoController
 from nuplan.planning.simulation.observation.abstract_observation import AbstractObservation
+from nuplan.planning.simulation.occlusion.abstract_occlusion_manager import AbstractOcclusionManager
 from nuplan.planning.simulation.planner.abstract_planner import AbstractPlanner
 from nuplan.planning.simulation.simulation_time_controller.abstract_simulation_time_controller import (
     AbstractSimulationTimeController,
@@ -16,6 +17,7 @@ class SimulationSetup:
     time_controller: AbstractSimulationTimeController
     observations: AbstractObservation
     ego_controller: AbstractEgoController
+    occlusion_manager: AbstractOcclusionManager
     scenario: AbstractScenario
 
     def __post_init__(self) -> None:
@@ -30,14 +32,18 @@ class SimulationSetup:
         assert isinstance(
             self.ego_controller, AbstractEgoController
         ), 'Error: ego_controller must inherit from AbstractEgoController!'
-
+        
     def reset(self) -> None:
         """
         Reset all simulation controllers
         """
+
         self.observations.reset()
         self.ego_controller.reset()
         self.time_controller.reset()
+
+        if self.occlusion_manager:
+            self.occlusion_manager.reset()
 
 
 def validate_planner_setup(setup: SimulationSetup, planner: AbstractPlanner) -> None:

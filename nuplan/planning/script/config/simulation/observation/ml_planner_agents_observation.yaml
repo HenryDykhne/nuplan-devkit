@@ -1,0 +1,44 @@
+_target_: nuplan.planning.simulation.observation.ml_planner_agents.MLPlannerAgents
+_convert_: 'all'
+
+model_config: null  # Dictionary key from existing planner model config (e.g. reactive_agents_model)
+checkpoint_path: null  # Path to trained model checkpoint
+planner_type: "ml"  # String to determine planner type (one of "ml", "idm", "pdm_closed", "pdm_hybrid")
+pdm_hybrid_ckpt: null  # Path to trained PDM hybrid model checkpoint
+
+
+occlusion_cfg:  # Dict that governs occlusion behavior
+  occlusion: false  # Boolean to determine whether occlusions should be enabled
+  manager_type: "wedge"  # options: [range, shadow, wedge]
+
+
+optimization_cfg:  # Dict that governs scenario optimizations
+  route_plan_culling: true  # Boolean to determine whether to cull agents who's route does not intersect with ego's route
+
+  mixed_agents: true  # Boolean to determine whether to make certain agents IDM for perfosrmance reasons
+  mixed_agent_heading_check: true # Boolean to determine whether, if mixed agents are enabled, to make idm agents who's heading is not within a certain range of ego's heading
+  mixed_agent_heading_check_range: 0.2 # Float to determine the range of heading difference (radians) between ego and idm agents
+  mixed_agent_relevance_distance: 30.0 # Float to determine whether, if mixed agents are enabled, to how far an agent must be from ego to be made idm
+
+  parked_car_threshold: 1.  # Float to determine the maxmimum traveled distance in the ground truth playback for a vehicle in a carpark to be considered parked
+
+  subsample_inference_frequency: 0.2  # Float to determine the rate subsampled agents should performance planning at
+  subsample_full_inference_distance: 30.0  # Float to determine the minimum distance from ego at which agents should be subsampled
+
+# These defaults are taken from two_stage_controller.yaml
+tracker_cfg: 
+  # LQR tuning
+  q_longitudinal: [10.0]      # velocity tracking cost gain
+  r_longitudinal: [1.0]       # acceleration tracking cost gain
+  q_lateral: [1.0, 10.0, 0.0] # [lateral_error, heading_error, steering_angle] tracking cost gains
+  r_lateral: [1.0]            # steering_rate tracking cost gain
+  discretization_time: 0.1    # [s] The time interval used for discretizing the continuous time dynamics.
+  tracking_horizon: 10        # The number of time steps (at discretization_time interval) ahead we consider for LQR.
+
+  # Parameters for velocity and curvature estimation.
+  jerk_penalty: 1e-4            # Penalty for jerk in velocity profile estimation.
+  curvature_rate_penalty: 1e-2  # Penalty for curvature rate in curvature profile estimation.
+
+  # Stopping logic
+  stopping_proportional_gain: 0.5 # Proportional controller tuning for stopping controller
+  stopping_velocity: 0.2          # [m/s] Velocity threshold for stopping

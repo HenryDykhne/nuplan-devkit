@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Tuple, Type
 
+from nuplan.common.actor_state.tracked_objects_types import TrackedObjectType
 from nuplan.planning.scenario_builder.abstract_scenario import AbstractScenario
 from nuplan.planning.simulation.callback.abstract_callback import AbstractCallback
 from nuplan.planning.simulation.callback.multi_callback import MultiCallback
@@ -11,6 +12,7 @@ from nuplan.planning.simulation.history.simulation_history_buffer import Simulat
 from nuplan.planning.simulation.planner.abstract_planner import PlannerInitialization, PlannerInput
 from nuplan.planning.simulation.simulation_setup import SimulationSetup
 from nuplan.planning.simulation.trajectory.abstract_trajectory import AbstractTrajectory
+from nuplan.planning.scenario_builder.scenario_modifier.abstract_scenario_modifier import AbstractModification
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ class Simulation:
         simulation_setup: SimulationSetup,
         callback: Optional[AbstractCallback] = None,
         simulation_history_buffer_duration: float = 2,
+        modification: Optional[AbstractModification] = None,
     ):
         """
         Create Simulation.
@@ -45,6 +48,7 @@ class Simulation:
         self._time_controller = simulation_setup.time_controller
         self._ego_controller = simulation_setup.ego_controller
         self._observations = simulation_setup.observations
+        self._occlusion_manager = simulation_setup.occlusion_manager
         self._scenario = simulation_setup.scenario
         self._callback = MultiCallback([]) if callback is None else callback
 
@@ -63,13 +67,17 @@ class Simulation:
 
         # Flag that keeps track whether simulation is still running
         self._is_simulation_running = True
+        
+        self.modification = modification
+        if self.modification:
+            self.modification.modify(self)
 
     def __reduce__(self) -> Tuple[Type[Simulation], Tuple[Any, ...]]:
         """
         Hints on how to reconstruct the object when pickling.
         :return: Object type and constructor arguments to be used.
         """
-        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration)
+        return self.__class__, (self._setup, self._callback, self._simulation_history_buffer_duration, self.modification)
 
     def is_simulation_running(self) -> bool:
         """
@@ -78,7 +86,7 @@ class Simulation:
         """
         return not self._time_controller.reached_end() and self._is_simulation_running
 
-    def reset(self) -> None:
+    def reset(self, modify=True) -> None:
         """
         Reset all internal states of simulation.
         """
@@ -93,6 +101,8 @@ class Simulation:
 
         # Restart simulation
         self._is_simulation_running = True
+        if self.modification and modify:
+            self.modification.modify(self)
 
     def initialize(self) -> PlannerInitialization:
         """
@@ -103,9 +113,10 @@ class Simulation:
         self.reset()
 
         # Initialize history from scenario
-        self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
-            self._history_buffer_size, self._scenario, self._observations.observation_type()
-        )
+        if self._history_buffer is None:
+            self._history_buffer = SimulationHistoryBuffer.initialize_from_scenario(
+                self._history_buffer_size, self._scenario, self._observations.observation_type()
+            )
 
         # Initialize observations
         self._observations.initialize()
@@ -136,8 +147,14 @@ class Simulation:
 
         # Extract traffic light status data
         traffic_light_data = list(self._scenario.get_traffic_light_status_at_iteration(iteration.index))
+
+        history_input = self._history_buffer
+            
+        if self._occlusion_manager is not None:
+            history_input = self._occlusion_manager.occlude_input(history_input)
+
         logger.debug(f"Executing {iteration.index}!")
-        return PlannerInput(iteration=iteration, history=self._history_buffer, traffic_light_data=traffic_light_data)
+        return PlannerInput(iteration=iteration, history=history_input, traffic_light_data=traffic_light_data)
 
     def propagate(self, trajectory: AbstractTrajectory) -> None:
         """
@@ -162,6 +179,10 @@ class Simulation:
         self._history.add_sample(
             SimulationHistorySample(iteration, ego_state, trajectory, observation, traffic_light_status)
         )
+        
+        if self._occlusion_manager:
+            self._history.occlusion_masks = self._occlusion_manager._visible_agent_cache
+            self._history.notice_masks = self._occlusion_manager._historical_noticed_agent_cache
 
         # Propagate state to next iteration
         next_iteration = self._time_controller.next_iteration()

@@ -87,7 +87,7 @@ class STRTreeOccupancyMap(OccupancyMap):
         :param ignore_id: the key corresponding to the geometry to be skipped
         :return: GeometryMap
         """
-        return {geom_id: geom for geom_id, geom in self._geom_map.items() if geom_id not in ignore_id}
+        return {geom_id: geom for geom_id, geom in self._geom_map.items() if geom_id != ignore_id}
 
     def _build_strtree(self, ignore_id: Optional[str] = None) -> Tuple[STRtree, Dict[int, str]]:
         """
