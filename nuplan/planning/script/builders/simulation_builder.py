@@ -161,6 +161,7 @@ def build_simulations(
             else:
                 # we need to reload the modifications from the first round of testing
                 assert 'scenarios_to_check' in cfg, 'You need to specify the scenario tokens to check in the alternate regime'
+            
             with open(modification_file_path, 'rb') as f:
                 modifications_for_second_testing_round = pickle.load(f)
                 for sim in simulations:
@@ -176,8 +177,7 @@ def build_simulations(
                                 original_modified_tokens.append(sim.simulation.scenario.token)
                                 
                 original_modified_tokens = list(dict.fromkeys(original_modified_tokens)) #deduplicate
-                
-                
+            
         else:
             num_gpus = cfg.number_of_gpus_allocated_per_simulation
             num_cpus = cfg.number_of_cpus_allocated_per_simulation

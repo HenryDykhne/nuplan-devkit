@@ -16,17 +16,18 @@ OCC gen is an extension to the nuPlan simulator. The nuPlan simulator allows for
 
 ## Features
 * Testing of planners under occluion and with reaction time delays.
-* Automatic dynamic occlusion scenario generation.
+* Automatic dynamic occlusion scenario generation with four avaliable generators according to our dynamic occlusion typology.
 * Ability to save and re-run generated scenarios under different conditions.
 * Ability to run scenarios with other agents controlled by reactive planners.
 * Visualization of scenarios and occlusion status via nuBoard.
 * Metrics tracking via nuBoard (functionality inherited from nuplan).
+<div align="center" style="overflow: hidden;"><img src="occ_extra_docs/readme_img/patterns_table_highlight.png" width=500px"></div>
+
+
 
 ## Installation Guide
-#original 
-* nuPlan devkit
-* tuPlan planner
-* 
+* The up to date instructions for installing this modified version of the nuPlan devkit are found [here](occ_extra_docs/installation.md). (The setup guide follows the original nuPlan setup page found [here](https://nuplan-devkit.readthedocs.io/en/latest/installation.html).)
+* Our work makes use of the tuPlan planner. It should be downloaded and installed side by side with the nuPlan devkit. Instructions on how to install it can be found [here](https://github.com/autonomousvision/tuplan_garage).
 
 ## Dataset Setup
 * The links to the dataset setup and structure can be found [here](occ_extra_docs/dataset_setup.md).
