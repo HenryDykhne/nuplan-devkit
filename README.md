@@ -9,8 +9,9 @@
 </p>
 
 <p align="center" style="overflow: hidden;">
-  <img src="occ_extra_docs/readme_img/occimg.png" width=500px style="margin: -100px 0 -120px 0px;"></div>
+  <img src="occ_extra_docs/readme_img/occimg.png" width=500px style="margin: -100px 0 -120px 0px;">
 </p>
+</div>
 
 ## Contributions
 OCC gen is an extension to the nuPlan simulator. The nuPlan simulator allows for the evaluation of autonomous driving planners against the variety of recorded scenarios. Our modifications allow the simulator to handle occlusions, and includes functionality for the automatic modification of scenarios for the purpose of generating critical dynamic occlusion scenarios.
@@ -23,10 +24,11 @@ OCC gen is an extension to the nuPlan simulator. The nuPlan simulator allows for
 * Visualization of scenarios and occlusion status via nuBoard.
 * Metrics tracking via nuBoard (functionality inherited from nuplan).
 
+<div align="center">
 <p align="center" style="overflow: hidden;">
-  <img src="occ_extra_docs/readme_img/patterns_table_highlight.png" width=500px">
+  <img src="occ_extra_docs/readme_img/patterns_table_highlight.png" width=700px">
 </p>
-
+</div>
 
 
 ## Installation Guide
