@@ -7,9 +7,10 @@
   <a href="https://uwaterloo.ca/waterloo-intelligent-systems-engineering-lab/projects/generating-occlusion-caused-collision-test-scenarios">Website</a> •
   <a href="https://uwspace.uwaterloo.ca/items/f62d32a5-140a-4348-abff-8a09c989bc68">Thesis</a>
 </p>
-<div align="center" style="overflow: hidden;"><img src="occ_extra_docs/readme_img/occimg.png" width=500px style="margin: -100px 0 -120px 0px;"></div>
 
-</div>
+<p align="center" style="overflow: hidden;">
+  <img src="occ_extra_docs/readme_img/occimg.png" width=500px style="margin: -100px 0 -120px 0px;"></div>
+</p>
 
 ## Contributions
 OCC gen is an extension to the nuPlan simulator. The nuPlan simulator allows for the evaluation of autonomous driving planners against the variety of recorded scenarios. Our modifications allow the simulator to handle occlusions, and includes functionality for the automatic modification of scenarios for the purpose of generating critical dynamic occlusion scenarios.
@@ -21,7 +22,10 @@ OCC gen is an extension to the nuPlan simulator. The nuPlan simulator allows for
 * Ability to run scenarios with other agents controlled by reactive planners.
 * Visualization of scenarios and occlusion status via nuBoard.
 * Metrics tracking via nuBoard (functionality inherited from nuplan).
-<div align="center" style="overflow: hidden;"><img src="occ_extra_docs/readme_img/patterns_table_highlight.png" width=500px"></div>
+
+<p align="center" style="overflow: hidden;">
+  <img src="occ_extra_docs/readme_img/patterns_table_highlight.png" width=500px">
+</p>
 
 
 
