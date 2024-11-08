@@ -46,6 +46,11 @@ To deactivate the virtual environment, use:
 conda deactivate
 ```
 
+### Add other nescesary packages
+```
+conda install pytorch-scatter -c pyg
+```
+
 -----
 ## Install the devkit
 ### Option A: Install PIP package from local
